@@ -12,6 +12,11 @@ window.OpenRouterService = {
   modelsCache: null,
   lastModelsFetch: null,
   
+  // Translation state tracking
+  isTranslating: false,
+  currentTranslation: null,
+  abortController: null,
+  
   /**
    * Initialize the OpenRouter service
    * @returns {Promise<void>}
@@ -20,53 +25,8 @@ window.OpenRouterService = {
     try {
       console.log('Initializing OpenRouterService');
       
-      // Set up event handlers
-      var testOpenRouterBtn = document.getElementById('test-openrouter-btn');
-      if (testOpenRouterBtn) {
-        testOpenRouterBtn.addEventListener('click', this.testConnection.bind(this));
-      }
-      
-      var refreshModelsBtn = document.getElementById('refresh-models-btn');
-      if (refreshModelsBtn) {
-        refreshModelsBtn.addEventListener('click', this.refreshModels.bind(this));
-      }
-      
-      var saveApiKeyBtn = document.getElementById('save-api-key-btn');
-      if (saveApiKeyBtn) {
-        saveApiKeyBtn.addEventListener('click', this.saveApiKey.bind(this));
-      }
-      
-      var openRouterModel = document.getElementById('openrouter-model');
-      if (openRouterModel) {
-        openRouterModel.addEventListener('change', this.handleModelChange.bind(this));
-      }
-      
-      // Populate model selector when settings tab is activated
-      var settingsTab = document.querySelector('.tab-btn[data-tab="settings"]');
-      if (settingsTab) {
-        settingsTab.addEventListener('click', async () => {
-          // Populate OpenRouter API key from current project
-          var currentProject = window.ProjectService.getCurrentProject();
-          if (currentProject) {
-            var apiKeyInput = document.getElementById('openrouter-api-key');
-            if (apiKeyInput) {
-              apiKeyInput.value = currentProject.settings?.openRouterApiKey || '';
-            }
-            
-            // Populate model selector
-            await this.populateModelSelector();
-          }
-        });
-      }
-      
-      // Initial population of API key and model settings if a project is loaded
-      var currentProject = window.ProjectService.getCurrentProject();
-      if (currentProject) {
-        var apiKeyInput = document.getElementById('openrouter-api-key');
-        if (apiKeyInput) {
-          apiKeyInput.value = currentProject.settings?.openRouterApiKey || '';
-        }
-      }
+      // Set up event handlers with simplified binding
+      this.setupEventHandlers();
       
       console.log('OpenRouterService initialized successfully');
       return Promise.resolve();
@@ -77,11 +37,86 @@ window.OpenRouterService = {
   },
   
   /**
+   * Set up all event handlers
+   */
+  setupEventHandlers: function() {
+    // Helper function to safely add event listener
+    const addListener = (elementId, event, handler) => {
+      const element = document.getElementById(elementId);
+      if (element) {
+        element.addEventListener(event, handler.bind(this));
+      }
+    };
+    
+    // Test connection button
+    addListener('test-openrouter-btn', 'click', this.testConnection);
+    
+    // Refresh models button
+    addListener('refresh-models-btn', 'click', this.refreshModels);
+    
+    // Save API key button
+    addListener('save-api-key-btn', 'click', this.saveApiKey);
+    
+    // Model selection dropdown
+    addListener('openrouter-model', 'change', this.handleModelChange);
+    
+    // Settings tab activation to load models
+    const settingsTab = document.querySelector('.tab-btn[data-tab="settings"]');
+    if (settingsTab) {
+      settingsTab.addEventListener('click', async () => {
+        // Populate OpenRouter API key from current project
+        const currentProject = window.ProjectService?.getCurrentProject();
+        if (currentProject) {
+          const apiKeyInput = document.getElementById('openrouter-api-key');
+          if (apiKeyInput) {
+            apiKeyInput.value = currentProject.settings?.openRouterApiKey || '';
+          }
+          
+          // Populate model selector if we have an API key
+          if (currentProject.settings?.openRouterApiKey) {
+            await this.populateModelSelector();
+          }
+        }
+      });
+    }
+    
+    // Initial population of API key if a project is loaded
+    const currentProject = window.ProjectService?.getCurrentProject();
+    if (currentProject) {
+      const apiKeyInput = document.getElementById('openrouter-api-key');
+      if (apiKeyInput) {
+        apiKeyInput.value = currentProject.settings?.openRouterApiKey || '';
+      }
+    }
+    
+    // Cancel translation button
+    addListener('cancel-translation-btn', 'click', this.cancelTranslation);
+  },
+  
+  /**
+   * Cancel ongoing translation
+   */
+  cancelTranslation: function() {
+    if (this.isTranslating && this.abortController) {
+      this.abortController.abort();
+      this.isTranslating = false;
+      this.currentTranslation = null;
+      
+      if (window.UIUtils) {
+        window.UIUtils.toggleLoading(false);
+        window.UIUtils.toggleProgressBar(false);
+        window.UIUtils.showNotification('Translation cancelled', 'info');
+        window.UIUtils.updateLastAction('Translation cancelled');
+      }
+    }
+  },
+  
+  /**
    * Get API key for the current project
    * @returns {string|null} API key or null if not available
    */
   getApiKey: function() {
-    var currentProject = window.ProjectService.getCurrentProject();
+    const currentProject = window.ProjectService?.getCurrentProject();
     if (!currentProject) return null;
     
     return currentProject.settings?.openRouterApiKey || null;
@@ -92,7 +127,7 @@ window.OpenRouterService = {
    * @returns {string|null} Model ID or null if not available
    */
   getModel: function() {
-    var currentProject = window.ProjectService.getCurrentProject();
+    const currentProject = window.ProjectService?.getCurrentProject();
     if (!currentProject) return null;
     
     return currentProject.settings?.openRouterModel || null;
@@ -102,7 +137,12 @@ window.OpenRouterService = {
    * Test OpenRouter connection
    */
   testConnection: function() {
-    var apiKeyInput = document.getElementById('openrouter-api-key');
+    // Use debounce to prevent rapid clicks
+    if (this._testingConnection) return;
+    this._testingConnection = true;
+    setTimeout(() => { this._testingConnection = false; }, 1000);
+    
+    const apiKeyInput = document.getElementById('openrouter-api-key');
     if (!apiKeyInput || !apiKeyInput.value.trim()) {
       if (window.UIUtils) {
         window.UIUtils.showNotification('Please enter an OpenRouter API key', 'warning');
@@ -117,7 +157,7 @@ window.OpenRouterService = {
     }
     
     // Save the API key to the current project
-    var currentProject = window.ProjectService.getCurrentProject();
+    const currentProject = window.ProjectService?.getCurrentProject();
     if (!currentProject) {
       if (window.UIUtils) {
         window.UIUtils.showNotification('Please select a project first', 'warning');
@@ -127,14 +167,23 @@ window.OpenRouterService = {
       return;
     }
     
+    // Update project settings
     window.ProjectService.updateProjectSettings(currentProject.id, {
       openRouterApiKey: apiKeyInput.value.trim()
     })
     .then(() => {
       // Test connection by fetching models
+      if (window.UIUtils) {
+        window.UIUtils.updateProgress(30, 'Retrieving available models...');
+      }
       return this.getAvailableModels(true);
     })
     .then(models => {
+      // Progress update
+      if (window.UIUtils) {
+        window.UIUtils.updateProgress(70, 'Updating model selector...');
+      }
+      
       // Populate model selector
       return this.populateModelSelector()
         .then(() => models);
@@ -144,7 +193,16 @@ window.OpenRouterService = {
         window.UIUtils.toggleLoading(false);
         window.UIUtils.toggleProgressBar(false);
         window.UIUtils.updateProgress(100, 'Connection successful');
-        window.UIUtils.showNotification(`Connection successful. Found ${models.length} available models.`, 'success');
+        
+        // Enhanced success message with model information
+        const recommendedModel = this.getRecommendedModel(models);
+        let message = `Connection successful. Found ${models.length} available models.`;
+        
+        if (recommendedModel) {
+          message += ` Recommended model: ${recommendedModel.name}.`;
+        }
+        
+        window.UIUtils.showNotification(message, 'success');
         window.UIUtils.updateLastAction('OpenRouter connection verified');
       }
     })
@@ -152,7 +210,16 @@ window.OpenRouterService = {
       if (window.UIUtils) {
         window.UIUtils.toggleLoading(false);
         window.UIUtils.toggleProgressBar(false);
-        window.UIUtils.showNotification(`Connection failed: ${error.message}`, 'error');
+        
+        // Enhanced error message with troubleshooting help
+        let errorMessage = `Connection failed: ${error.message}`;
+        if (error.message.includes('401') || error.message.includes('unauthorized')) {
+          errorMessage += '. Please check your API key.';
+        } else if (error.message.includes('timeout') || error.message.includes('network')) {
+          errorMessage += '. Please check your internet connection.';
+        }
+        
+        window.UIUtils.showNotification(errorMessage, 'error');
         window.UIUtils.updateLastAction('OpenRouter connection failed');
       }
       console.error('OpenRouter connection test failed:', error);
@@ -160,13 +227,46 @@ window.OpenRouterService = {
   },
   
   /**
+   * Get recommended model from the available models
+   * @param {Array} models - List of available models
+   * @returns {Object|null} Recommended model or null
+   */
+  getRecommendedModel: function(models) {
+    if (!Array.isArray(models) || models.length === 0) return null;
+    
+    // Try to find Claude or GPT model with good balance of capability and speed
+    const preferredModels = [
+      'anthropic/claude-3-opus',
+      'anthropic/claude-3-sonnet',
+      'anthropic/claude-3-haiku',
+      'openai/gpt-4-turbo',
+      'google/gemini-pro'
+    ];
+    
+    for (const preferredId of preferredModels) {
+      const model = models.find(m => m.id === preferredId);
+      if (model) return model;
+    }
+    
+    // Fall back to any Claude or GPT model
+    const claudeModel = models.find(m => m.id.includes('claude'));
+    if (claudeModel) return claudeModel;
+    
+    const gptModel = models.find(m => m.id.includes('gpt'));
+    if (gptModel) return gptModel;
+    
+    // If no preferred models found, return the first available
+    return models[0];
+  },
+  
+  /**
    * Save API key
    */
   saveApiKey: function() {
-    var apiKeyInput = document.getElementById('openrouter-api-key');
+    const apiKeyInput = document.getElementById('openrouter-api-key');
     if (!apiKeyInput) return;
     
-    var currentProject = window.ProjectService.getCurrentProject();
+    const currentProject = window.ProjectService?.getCurrentProject();
     if (!currentProject) {
       if (window.UIUtils) {
         window.UIUtils.showNotification('Please select a project first', 'warning');
@@ -174,13 +274,28 @@ window.OpenRouterService = {
       return;
     }
     
+    const apiKey = apiKeyInput.value.trim();
+    
+    // Validate API key format (basic check)
+    if (apiKey && !apiKey.match(/^[a-zA-Z0-9_-]{30,}$/)) {
+      if (window.UIUtils) {
+        window.UIUtils.showNotification('The API key format appears invalid. Please check it.', 'warning');
+      }
+      // Continue anyway as the format might vary
+    }
+    
     window.ProjectService.updateProjectSettings(currentProject.id, {
-      openRouterApiKey: apiKeyInput.value.trim()
+      openRouterApiKey: apiKey
     })
     .then(() => {
       if (window.UIUtils) {
         window.UIUtils.showNotification('API key saved', 'success');
         window.UIUtils.updateLastAction('OpenRouter API key updated');
+      }
+      
+      // If API key was added, try to populate the models
+      if (apiKey && !this.modelsCache) {
+        this.populateModelSelector();
       }
     })
     .catch(error => {
@@ -196,22 +311,49 @@ window.OpenRouterService = {
    * @param {Event} e - Change event
    */
   handleModelChange: function(e) {
-    var currentProject = window.ProjectService.getCurrentProject();
+    const currentProject = window.ProjectService?.getCurrentProject();
     if (!currentProject) return;
     
-    window.ProjectService.updateProjectSettings(currentProject.id, {
-      openRouterModel: e.target.value
-    })
-    .then(() => {
-      if (window.UIUtils) {
-        window.UIUtils.updateLastAction('OpenRouter model updated');
-      }
-    })
-    .catch(error => {
-      console.error('Error saving model selection:', error);
-      if (window.UIUtils) {
-        window.UIUtils.showNotification(`Error saving model selection: ${error.message}`, 'error');
-      }
+    const modelId = e.target.value;
+    
+    // Find the model details to show additional info
+    this.getAvailableModels().then(models => {
+      const selectedModel = models.find(m => m.id === modelId);
+      
+      window.ProjectService.updateProjectSettings(currentProject.id, {
+        openRouterModel: modelId
+      })
+      .then(() => {
+        if (window.UIUtils) {
+          let message = 'OpenRouter model updated';
+          
+          // Add pricing info if available
+          if (selectedModel?.pricing) {
+            const promptPrice = parseFloat(selectedModel.pricing.prompt || 0).toFixed(4);
+            const completionPrice = parseFloat(selectedModel.pricing.completion || 0).toFixed(4);
+            message += ` (Pricing: ${promptPrice}/${completionPrice} per 1M tokens)`;
+          }
+          
+          window.UIUtils.updateLastAction(message);
+          
+          // Show notification with model info
+          if (selectedModel) {
+            window.UIUtils.showNotification(`Model set to ${selectedModel.name || modelId}`, 'success');
+          }
+        }
+      })
+      .catch(error => {
+        console.error('Error saving model selection:', error);
+        if (window.UIUtils) {
+          window.UIUtils.showNotification(`Error saving model selection: ${error.message}`, 'error');
+        }
+      });
+    }).catch(error => {
+      console.error('Error getting model details:', error);
+      // Still update the model setting even if we can't get details
+      window.ProjectService.updateProjectSettings(currentProject.id, {
+        openRouterModel: modelId
+      });
     });
   },
   
@@ -245,7 +387,7 @@ window.OpenRouterService = {
  */
 getAvailableModels: function(forceRefresh = false) {
   // Check cache first (cache for 24 hours)
-  var now = Date.now();
+  const now = Date.now();
   if (
     !forceRefresh && 
     this.modelsCache && 
@@ -280,12 +422,17 @@ getAvailableModels: function(forceRefresh = false) {
     }
   }
   
-  var apiKey = this.getApiKey();
+  // Get API key
+  const apiKey = this.getApiKey();
   if (!apiKey) {
     return Promise.reject(new Error('OpenRouter API key is required. Please set it in the project settings.'));
   }
   
   console.log(`Fetching models from OpenRouter API: ${this.BASE_URL}/models`);
+  
+  // Create abort controller for timeout
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), 30000); // 30 second timeout
   
   return fetch(`${this.BASE_URL}/models`, {
     method: 'GET',
@@ -294,9 +441,11 @@ getAvailableModels: function(forceRefresh = false) {
       'Authorization': `Bearer ${apiKey}`,
       'HTTP-Referer': window.location.origin || 'https://quillsyncai.com',
       'X-Title': 'QuillSync AI'
-    }
+    },
+    signal: abortController.signal
   })
   .then(response => {
+    clearTimeout(timeoutId);
     console.log(`OpenRouter API response status: ${response.status}`);
     
     if (!response.ok) {
@@ -305,7 +454,15 @@ getAvailableModels: function(forceRefresh = false) {
         try {
           const errorData = JSON.parse(text);
           console.error('OpenRouter API error response:', errorData);
-          throw new Error(`API request failed with status ${response.status}: ${errorData.error?.message || errorData.message || text}`);
+          
+          // Provide a more helpful error message
+          if (response.status === 401) {
+            throw new Error('API key is invalid or expired. Please check your OpenRouter API key.');
+          } else if (response.status === 429) {
+            throw new Error('Rate limit exceeded. Please try again later.');
+          } else {
+            throw new Error(`API request failed with status ${response.status}: ${errorData.error?.message || errorData.message || text}`);
+          }
         } catch (e) {
           console.error('OpenRouter API raw error response:', text);
           throw new Error(`API request failed with status ${response.status}: ${text}`);
@@ -339,7 +496,7 @@ getAvailableModels: function(forceRefresh = false) {
     console.log(`Processing ${modelData.length} models from API response`);
     
     // Filter for models that support text generation
-    var textModels = modelData.filter(model => {
+    const textModels = modelData.filter(model => {
       if (!model) return false;
       
       // Try different ways to check capabilities based on API response format
@@ -353,22 +510,70 @@ getAvailableModels: function(forceRefresh = false) {
     
     console.log(`Filtered to ${textModels.length} text generation models`);
     
+    // Enhance models with additional metadata for better UI presentation
+    const enhancedModels = textModels.map(model => {
+      // Add provider display name
+      if (model.id) {
+        const provider = model.id.split('/')[0] || 'unknown';
+        model.providerDisplayName = this.getProviderDisplayName(provider);
+      }
+      
+      // Add model class category
+      model.category = this.categorizeModel(model);
+      
+      return model;
+    });
+    
+    // Sort models by category and name for better organization
+    enhancedModels.sort((a, b) => {
+      // Sort by category first
+      if (a.category !== b.category) {
+        // Premium models first
+        if (a.category === 'premium') return -1;
+        if (b.category === 'premium') return 1;
+        // Then balanced models
+        if (a.category === 'balanced') return -1;
+        if (b.category === 'balanced') return 1;
+        // Then economy models
+        if (a.category === 'economy') return -1;
+        if (b.category === 'economy') return 1;
+      }
+      
+      // Sort by provider next
+      const providerA = (a.id || '').split('/')[0] || '';
+      const providerB = (b.id || '').split('/')[0] || '';
+      if (providerA !== providerB) {
+        return providerA.localeCompare(providerB);
+      }
+      
+      // Finally, sort by name
+      return (a.name || '').localeCompare(b.name || '');
+    });
+    
     // Update cache in memory
-    this.modelsCache = textModels;
+    this.modelsCache = enhancedModels;
     this.lastModelsFetch = now;
     
     // Save to localStorage cache
     try {
-      localStorage.setItem('openrouter_models_cache', JSON.stringify(textModels));
+      localStorage.setItem('openrouter_models_cache', JSON.stringify(enhancedModels));
       localStorage.setItem('openrouter_models_timestamp', now.toString());
       console.log('Models cached to localStorage successfully');
     } catch (e) {
       console.warn('Failed to save models to localStorage cache:', e);
     }
     
-    return textModels;
+    return enhancedModels;
   })
   .catch(error => {
+    clearTimeout(timeoutId);
+    
+    // Improved error handling with specific error types
+    if (error.name === 'AbortError') {
+      console.error('Request to fetch models timed out');
+      throw new Error('Request to fetch models timed out. Please check your internet connection and try again.');
+    }
+    
     console.error('Error fetching OpenRouter models:', error);
     
     // If we have cached models, return them as fallback
@@ -380,6 +585,57 @@ getAvailableModels: function(forceRefresh = false) {
     throw error;
   });
 },
+
+  /**
+   * Get display name for a model provider
+   * @param {string} provider - Provider identifier from model.id
+   * @returns {string} Formatted provider name
+   */
+  getProviderDisplayName: function(provider) {
+    const providerNames = {
+      'openai': 'OpenAI',
+      'anthropic': 'Anthropic',
+      'google': 'Google',
+      'mistral': 'Mistral AI',
+      'meta': 'Meta',
+      'cohere': 'Cohere',
+      'azure': 'Azure'
+    };
+    
+    return providerNames[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
+  },
+  
+  /**
+   * Categorize model by its capabilities and pricing
+   * @param {Object} model - Model data
+   * @returns {string} Category label ('premium', 'balanced', 'economy')
+   */
+  categorizeModel: function(model) {
+    // Premium models - high capability, usually higher cost
+    if (model.id && (
+        model.id.includes('gpt-4') || 
+        model.id.includes('claude-3-opus') || 
+        model.id.includes('claude-3-sonnet') || 
+        model.id.includes('gemini-pro') ||
+        model.id.includes('gemini-1.5')
+    )) {
+      return 'premium';
+    }
+    
+    // Balanced models - good capability with moderate cost
+    if (model.id && (
+        model.id.includes('gpt-3.5') || 
+        model.id.includes('claude-3-haiku') || 
+        model.id.includes('claude-instant') ||
+        model.id.includes('mistral-medium') ||
+        model.id.includes('mistral-large')
+    )) {
+      return 'balanced';
+    }
+    
+    // Economy models - more affordable but potentially less capable
+    return 'economy';
+  },
   
   /**
    * Populate the model selector dropdown
@@ -388,14 +644,14 @@ getAvailableModels: function(forceRefresh = false) {
    * @returns {Promise<void>}
    */
   populateModelSelector: function(forceRefresh = false, selectId = 'openrouter-model') {
-    var selectElement = document.getElementById(selectId);
+    const selectElement = document.getElementById(selectId);
     if (!selectElement) {
       console.warn(`Model selector element with ID '${selectId}' not found`);
       return Promise.resolve();
     }
     
     // Try to get API key
-    var apiKey = this.getApiKey();
+    const apiKey = this.getApiKey();
     if (!apiKey) {
       console.log('No API key available, showing API key required message');
       selectElement.innerHTML = '<option value="">API Key Required</option>';
@@ -412,72 +668,118 @@ getAvailableModels: function(forceRefresh = false) {
         console.log(`Received ${models.length} models, organizing for selector...`);
         
         try {
-          // Sort models by provider then name
-          models.sort((a, b) => {
-            var providerA = (a.id || '').split('/')[0] || '';
-            var providerB = (b.id || '').split('/')[0] || '';
-            
-            if (providerA !== providerB) {
-              return providerA.localeCompare(providerB);
-            }
-            
-            return (a.name || '').localeCompare(b.name || '');
+          // Group models by category and provider
+          const groupedModels = {};
+          
+          // Create categories first
+          ['premium', 'balanced', 'economy'].forEach(category => {
+            groupedModels[category] = {};
           });
           
-          // Group models by provider
-          var groupedModels = {};
+          // Group by category then provider
           models.forEach(model => {
             if (!model.id) {
               console.warn('Model missing ID:', model);
               return;
             }
             
-            var provider = model.id.split('/')[0] || 'unknown';
-            if (!groupedModels[provider]) {
-              groupedModels[provider] = [];
+            const category = model.category || 'economy';
+            const provider = model.id.split('/')[0] || 'unknown';
+            
+            if (!groupedModels[category][provider]) {
+              groupedModels[category][provider] = [];
             }
-            groupedModels[provider].push(model);
+            
+            groupedModels[category][provider].push(model);
           });
           
-          // Clear select
+          // Clear select and add default option
           selectElement.innerHTML = '<option value="">Select a model</option>';
           
-          // Add optgroups for each provider
-          Object.entries(groupedModels).forEach(([provider, providerModels]) => {
-            var optgroup = document.createElement('optgroup');
-            optgroup.label = provider.charAt(0).toUpperCase() + provider.slice(1);
+          // Add models by category then provider
+          ['premium', 'balanced', 'economy'].forEach(category => {
+            if (Object.keys(groupedModels[category]).length === 0) return;
             
-            providerModels.forEach(model => {
-              var option = document.createElement('option');
-              option.value = model.id;
+            // Create category group
+            const categoryGroup = document.createElement('optgroup');
+            categoryGroup.label = {
+              'premium': '🌟 Premium Models',
+              'balanced': '⚖️ Balanced Models',
+              'economy': '💰 Economy Models'
+            }[category];
+            
+            let hasModels = false;
+            
+            // Add provider groups within category
+            Object.entries(groupedModels[category]).forEach(([provider, providerModels]) => {
+              if (providerModels.length === 0) return;
               
-              // Show pricing if available
-              var pricingInfo = '';
-              if (model.pricing) {
-                var promptPrice = parseFloat(model.pricing.prompt || 0).toFixed(4);
-                var completionPrice = parseFloat(model.pricing.completion || 0).toFixed(4);
-                pricingInfo = ` (${promptPrice}/${completionPrice})`;
-              }
+              hasModels = true;
               
-              option.textContent = `${model.name || model.id}${pricingInfo}`;
+              // Create provider group
+              const providerGroup = document.createElement('optgroup');
+              providerGroup.label = '    ' + this.getProviderDisplayName(provider);
+              providerGroup.style.marginLeft = '10px';
               
-              // Add data attributes for additional info
-              option.dataset.contextLength = model.context_length || 4096;
-              if (model.pricing) {
-                option.dataset.promptPrice = model.pricing.prompt || 0;
-                option.dataset.completionPrice = model.pricing.completion || 0;
-              }
+              // Add models for this provider
+              providerModels.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id;
+                
+                // Show pricing if available
+                let pricingInfo = '';
+                if (model.pricing) {
+                  const promptPrice = parseFloat(model.pricing.prompt || 0).toFixed(4);
+                  const completionPrice = parseFloat(model.pricing.completion || 0).toFixed(4);
+                  pricingInfo = ` ($${promptPrice}/$${completionPrice})`;
+                }
+                
+                option.textContent = `${model.name || model.id}${pricingInfo}`;
+                
+                // Add data attributes for additional info
+                option.dataset.contextLength = model.context_length || 4096;
+                if (model.pricing) {
+                  option.dataset.promptPrice = model.pricing.prompt || 0;
+                  option.dataset.completionPrice = model.pricing.completion || 0;
+                }
+                
+                providerGroup.appendChild(option);
+              });
               
-              optgroup.appendChild(option);
+              categoryGroup.appendChild(providerGroup);
             });
             
-            selectElement.appendChild(optgroup);
+            if (hasModels) {
+              selectElement.appendChild(categoryGroup);
+            }
           });
           
+          // Simple fallback if we couldn't organize by category and provider
+          if (selectElement.options.length <= 1) {
+            models.forEach(model => {
+              if (!model.id) return;
+              
+              const option = document.createElement('option');
+              option.value = model.id;
+              option.textContent = model.name || model.id;
+              selectElement.appendChild(option);
+            });
+          }
+          
           // Restore previously selected model if any
-          var currentProject = window.ProjectService.getCurrentProject();
+          const currentProject = window.ProjectService?.getCurrentProject();
           if (currentProject?.settings?.openRouterModel) {
             selectElement.value = currentProject.settings.openRouterModel;
+            
+            // If the saved model doesn't exist in the list, show a warning
+            if (selectElement.value !== currentProject.settings.openRouterModel) {
+              if (window.UIUtils) {
+                window.UIUtils.showNotification(
+                  'The previously selected model is no longer available. Please select a new model.',
+                  'warning'
+                );
+              }
+            }
           }
           
           console.log('Successfully populated model selector');
@@ -503,12 +805,30 @@ getAvailableModels: function(forceRefresh = false) {
    * @returns {Promise<string|Response>} Generated text or response for streaming
    */
   generateCompletion: function(model, prompt, temperature = 0.7, maxTokens = 2000, stream = false) {
-    var apiKey = this.getApiKey();
+    const apiKey = this.getApiKey();
     if (!apiKey) {
       return Promise.reject(new Error('OpenRouter API key is required. Please set it in the project settings.'));
     }
     
+    if (!model) {
+      return Promise.reject(new Error('Model ID is required. Please select a model in the Settings tab.'));
+    }
+    
+    // Sanitize and validate input
+    if (!prompt || typeof prompt !== 'string') {
+      return Promise.reject(new Error('Invalid prompt provided'));
+    }
+    
+    // Ensure temperature is within valid range
+    temperature = Math.max(0, Math.min(1, temperature));
+    
+    // Ensure max tokens is reasonable 
+    maxTokens = Math.max(100, Math.min(32000, maxTokens));
+    
     console.log(`Generating completion with model: ${model}, streaming: ${stream}`);
+    
+    // Create abort controller
+    this.abortController = new AbortController();
     
     const requestBody = {
       model: model,
@@ -526,6 +846,11 @@ getAvailableModels: function(forceRefresh = false) {
     
     console.log(`Sending request to ${this.BASE_URL}/chat/completions`);
     
+    // Set request timeout
+    const timeoutId = setTimeout(() => {
+      this.abortController.abort();
+    }, 120000); // 2 minutes timeout
+    
     return fetch(`${this.BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -534,9 +859,11 @@ getAvailableModels: function(forceRefresh = false) {
         'HTTP-Referer': window.location.origin || 'https://quillsyncai.com',
         'X-Title': 'QuillSync AI'
       },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: this.abortController.signal
     })
     .then(response => {
+      clearTimeout(timeoutId);
       console.log(`OpenRouter completion response status: ${response.status}`);
       
       if (!response.ok) {
@@ -544,7 +871,17 @@ getAvailableModels: function(forceRefresh = false) {
           try {
             const errorData = JSON.parse(text);
             console.error('OpenRouter completion error:', errorData);
-            throw new Error(`API request failed with status ${response.status}: ${errorData.error?.message || errorData.message || text}`);
+            
+            // Enhanced error messages
+            if (response.status === 401) {
+              throw new Error('API key is invalid or expired. Please check your OpenRouter API key.');
+            } else if (response.status === 429) {
+              throw new Error('Rate limit exceeded. Please try again later or use a different model.');
+            } else if (response.status === 400 && text.includes('context')) {
+              throw new Error('Input is too long for this model. Please try a smaller chunk or different model.');
+            } else {
+              throw new Error(`API request failed with status ${response.status}: ${errorData.error?.message || errorData.message || text}`);
+            }
           } catch (e) {
             console.error('OpenRouter completion raw error:', text);
             throw new Error(`API request failed with status ${response.status}: ${text}`);
@@ -560,18 +897,32 @@ getAvailableModels: function(forceRefresh = false) {
         console.log('Processing non-streaming response');
         // Handle non-streaming response
         return response.json().then(data => {
-          console.log('Received completion data:', data);
+          console.log('Received completion data');
           
           if (!data.choices || !data.choices.length || !data.choices[0].message) {
             console.error('Unexpected completion response format:', data);
             throw new Error('Invalid response format from OpenRouter API');
           }
           
+          // Extract and return content
           return data.choices[0].message.content;
         });
       }
     })
     .catch(error => {
+      clearTimeout(timeoutId);
+      
+      // Enhanced error handling
+      if (error.name === 'AbortError') {
+        if (this.abortController.signal.reason === 'timeout') {
+          console.error('Request timed out');
+          throw new Error('The translation request timed out. The server might be busy, please try again later.');
+        } else {
+          console.error('Request was cancelled');
+          throw new Error('Translation request was cancelled.');
+        }
+      }
+      
       console.error('Error generating completion:', error);
       throw error;
     });
@@ -582,7 +933,15 @@ getAvailableModels: function(forceRefresh = false) {
    * @param {boolean} useInput - Whether to use input text (true) or chapter text (false)
    */
   translateText: function(useInput = true) {
-    var currentProject = window.ProjectService.getCurrentProject();
+    // Prevent multiple concurrent translations
+    if (this.isTranslating) {
+      if (window.UIUtils) {
+        window.UIUtils.showNotification('Translation already in progress. Please wait or cancel the current translation.', 'warning');
+      }
+      return;
+    }
+    
+    const currentProject = window.ProjectService?.getCurrentProject();
     if (!currentProject) {
       if (window.UIUtils) {
         window.UIUtils.showNotification('Please select a project first', 'warning');
@@ -605,11 +964,12 @@ getAvailableModels: function(forceRefresh = false) {
       return;
     }
     
-    var sourceText = '';
+    // Get source text
+    let sourceText = '';
     if (useInput) {
-      sourceText = document.getElementById('input-text').value.trim();
+      sourceText = document.getElementById('input-text')?.value?.trim() || '';
     } else {
-      sourceText = document.getElementById('chapter-text').value.trim();
+      sourceText = document.getElementById('chapter-text')?.value?.trim() || '';
     }
     
     if (!sourceText) {
@@ -623,178 +983,294 @@ getAvailableModels: function(forceRefresh = false) {
   },
   
   /**
- * Translate Chinese text to English
- * @param {string} chineseText - Chinese text to translate
- * @param {Object} project - Current project
- */
-translateChineseText: function(chineseText, project) {
-  if (window.UIUtils) {
-    window.UIUtils.toggleLoading(true, 'Preparing translation with OpenRouter...');
-    window.UIUtils.toggleProgressBar(true);
-    window.UIUtils.updateProgress(0, 'Analyzing text...');
-  }
-  
-  // Get chunking settings
-  var strategy = document.getElementById('chunking-strategy').value;
-  var chunkSize = parseInt(document.getElementById('chunk-size').value) || 1000;
-  
-  // Check if glossary should be applied
-  var applyGlossaryToggle = document.getElementById('apply-glossary-toggle');
-  var shouldApplyGlossary = applyGlossaryToggle ? applyGlossaryToggle.checked : true;
-  
-  // Process text with or without glossary based on toggle
-  if (shouldApplyGlossary) {
-    // Apply glossary if available and toggle is on
-    window.GlossaryService.getGlossaryEntries(project.id)
-      .then(glossaryEntries => {
-        var textToTranslate = chineseText;
-        if (glossaryEntries.length > 0) {
-          textToTranslate = window.GlossaryService.applyGlossary(chineseText, glossaryEntries);
-          console.log(`Applied ${glossaryEntries.length} glossary terms`);
-          
-          if (window.UIUtils) {
-            window.UIUtils.showNotification(`Applied ${glossaryEntries.length} glossary terms before translation`, 'info', 3000);
-          }
-        } else {
-          console.log('No glossary terms to apply');
-        }
-        
-        // Continue with translation process using processed text
-        this.processTranslation(textToTranslate, chineseText, project, strategy, chunkSize);
-      })
-      .catch(error => {
-        console.error('Error applying glossary:', error);
-        // Continue with original text
-        this.processTranslation(chineseText, chineseText, project, strategy, chunkSize);
-      });
-  } else {
-    // Skip glossary application if toggle is off
+   * Translate Chinese text to English
+   * @param {string} chineseText - Chinese text to translate
+   * @param {Object} project - Current project
+   */
+  translateChineseText: function(chineseText, project) {
+    // Set translation state
+    this.isTranslating = true;
+    this.currentTranslation = null;
+    
     if (window.UIUtils) {
-      window.UIUtils.showNotification('Glossary application skipped (toggle is off)', 'info', 3000);
+      window.UIUtils.toggleLoading(true, 'Preparing translation with OpenRouter...');
+      window.UIUtils.toggleProgressBar(true);
+      window.UIUtils.updateProgress(0, 'Analyzing text...');
     }
     
-    // Continue with translation using original text
-    this.processTranslation(chineseText, chineseText, project, strategy, chunkSize);
-  }
-},
-
-/**
- * Process the translation after optional glossary application
- * @param {string} processedText - Text to translate (possibly with glossary applied)
- * @param {string} originalText - Original text before processing (for verification)
- * @param {Object} project - Current project
- * @param {string} strategy - Chunking strategy
- * @param {number} chunkSize - Chunk size
- */
-processTranslation: function(processedText, originalText, project, strategy, chunkSize) {
-  // Chunk the text
-  var chunks = window.TextChunkerService.chunkText(processedText, strategy, chunkSize);
-  if (chunks.length === 0) {
-    if (window.UIUtils) {
-      window.UIUtils.toggleLoading(false);
-      window.UIUtils.toggleProgressBar(false);
-      window.UIUtils.showNotification('No valid text chunks to translate', 'error');
+    // Show cancel button if it exists
+    const cancelBtn = document.getElementById('cancel-translation-btn');
+    if (cancelBtn) {
+      cancelBtn.style.display = 'block';
     }
-    return;
-  }
-  
-  if (window.UIUtils) {
-    window.UIUtils.updateProgress(5, `Preparing to translate ${chunks.length} chunks...`);
-  }
-  
-  // Estimate tokens and cost
-  this.estimateTokensAndCost(processedText, project.settings.openRouterModel)
-    .then(estimateResult => {
-      console.log('Translation estimate:', estimateResult);
-      
-      if (window.UIUtils) {
-        window.UIUtils.updateProgress(10, `Estimated tokens: ${estimateResult.estimatedTokens}`);
-      }
-      
-      // Translate each chunk
-      var fullTranslation = '';
-      var progress = 10;
-      var progressPerChunk = 85 / chunks.length;
-      
-      // Process chunks sequentially
-      return chunks.reduce((promise, chunk, index) => {
-        return promise.then(accumTranslation => {
-          if (window.UIUtils) {
-            window.UIUtils.updateProgress(
-              Math.round(progress),
-              `Translating chunk ${index + 1}/${chunks.length}`
-            );
+    
+    // Get chunking settings
+    const strategy = document.getElementById('chunking-strategy')?.value || 'auto';
+    const chunkSize = parseInt(document.getElementById('chunk-size')?.value) || 1000;
+    
+    // Check if glossary should be applied
+    const applyGlossaryToggle = document.getElementById('apply-glossary-toggle');
+    const shouldApplyGlossary = applyGlossaryToggle ? applyGlossaryToggle.checked : true;
+    
+    // Process text with or without glossary based on toggle
+    if (shouldApplyGlossary) {
+      // Apply glossary if available and toggle is on
+      window.GlossaryService.getGlossaryEntries(project.id)
+        .then(glossaryEntries => {
+          let textToTranslate = chineseText;
+          if (glossaryEntries.length > 0) {
+            textToTranslate = window.GlossaryService.applyGlossary(chineseText, glossaryEntries);
+            console.log(`Applied ${glossaryEntries.length} glossary terms`);
+            
+            if (window.UIUtils) {
+              window.UIUtils.showNotification(`Applied ${glossaryEntries.length} glossary terms before translation`, 'info', 3000);
+            }
+          } else {
+            console.log('No glossary terms to apply');
           }
           
-          return this.translateChunk(
-            chunk,
-            project.settings.openRouterModel,
-            project.instructions || '',
-            partialTranslation => {
-              // This callback is called with incremental updates if streaming
-              if (window.quill) {
-                window.quill.setText(accumTranslation + partialTranslation);
-              }
-            }
-          )
-          .then(chunkTranslation => {
-            var updatedTranslation = accumTranslation + (index > 0 ? '\n\n' : '') + chunkTranslation;
-            
-            // Update translation in editor
-            if (window.quill) {
-              window.quill.setText(updatedTranslation);
-            }
-            
-            progress += progressPerChunk;
-            return updatedTranslation;
-          });
+          // Continue with translation process using processed text
+          this.processTranslation(textToTranslate, chineseText, project, strategy, chunkSize);
+        })
+        .catch(error => {
+          console.error('Error applying glossary:', error);
+          // Continue with original text
+          this.processTranslation(chineseText, chineseText, project, strategy, chunkSize);
         });
-      }, Promise.resolve(''))
-      .then(finalTranslation => {
+    } else {
+      // Skip glossary application if toggle is off
+      if (window.UIUtils) {
+        window.UIUtils.showNotification('Glossary application skipped (toggle is off)', 'info', 3000);
+      }
+      
+      // Continue with translation using original text
+      this.processTranslation(chineseText, chineseText, project, strategy, chunkSize);
+    }
+  },
+  
+  /**
+   * Process the translation after optional glossary application
+   * @param {string} processedText - Text to translate (possibly with glossary applied)
+   * @param {string} originalText - Original text before processing (for verification)
+   * @param {Object} project - Current project
+   * @param {string} strategy - Chunking strategy
+   * @param {number} chunkSize - Chunk size
+   */
+  processTranslation: function(processedText, originalText, project, strategy, chunkSize) {
+    // Chunk the text
+    const textChunker = window.TextChunkerService || window.TextUtils;
+    let chunks = [];
+    
+    if (textChunker) {
+      if (strategy === 'auto' && textChunker.autoChunk) {
+        chunks = textChunker.autoChunk(processedText, chunkSize);
+      } else if (strategy === 'chapter' && textChunker.chunkByChapters) {
+        chunks = textChunker.chunkByChapters(processedText);
+      } else if (strategy === 'word-count' && textChunker.chunkByWordCount) {
+        chunks = textChunker.chunkByWordCount(processedText, chunkSize);
+      } else {
+        // Fallback if specific method not found
+        chunks = this.chunkText(processedText, chunkSize);
+      }
+    } else {
+      // Fallback chunking if no chunker service is available
+      chunks = this.chunkText(processedText, chunkSize);
+    }
+    
+    if (chunks.length === 0) {
+      this.isTranslating = false;
+      if (window.UIUtils) {
+        window.UIUtils.toggleLoading(false);
+        window.UIUtils.toggleProgressBar(false);
+        window.UIUtils.showNotification('No valid text chunks to translate', 'error');
+      }
+      return;
+    }
+    
+    if (window.UIUtils) {
+      window.UIUtils.updateProgress(5, `Preparing to translate ${chunks.length} chunks...`);
+    }
+    
+    // Estimate tokens and cost
+    this.estimateTokensAndCost(processedText, project.settings.openRouterModel)
+      .then(estimateResult => {
+        console.log('Translation estimate:', estimateResult);
+        
         if (window.UIUtils) {
-          window.UIUtils.updateProgress(95, 'Finalizing translation...');
+          let message = `Estimated ${estimateResult.estimatedTokens} tokens`;
+          if (estimateResult.estimatedCost > 0) {
+            message += ` (approx. $${estimateResult.estimatedCost.toFixed(5)})`;
+          }
+          window.UIUtils.updateProgress(10, message);
         }
         
-        // Save the translation to the project
-        if (window.quill) {
-          return window.ProjectService.updateProjectOutput(
-            project.id,
-            window.quill.getContents().ops
-          )
-          .then(() => finalTranslation);
-        }
+        // Translate each chunk
+        let fullTranslation = "";
+        let progress = 10;
+        const progressPerChunk = 85 / chunks.length;
         
-        return finalTranslation;
+        // Process chunks sequentially
+        return chunks.reduce((promise, chunk, index) => {
+          return promise.then(accumTranslation => {
+            if (window.UIUtils) {
+              window.UIUtils.updateProgress(
+                Math.round(progress),
+                `Translating chunk ${index + 1}/${chunks.length}`
+              );
+            }
+            
+            return this.translateChunk(
+              chunk,
+              project.settings.openRouterModel,
+              project.instructions || '',
+              partialTranslation => {
+                // This callback is called with incremental updates if streaming
+                if (window.quill) {
+                  window.quill.setText(accumTranslation + partialTranslation);
+                }
+              }
+            )
+            .then(chunkTranslation => {
+              const updatedTranslation = accumTranslation + (index > 0 ? '\n\n' : '') + chunkTranslation;
+              
+              // Update translation in editor
+              if (window.quill) {
+                window.quill.setText(updatedTranslation);
+              }
+              
+              progress += progressPerChunk;
+              return updatedTranslation;
+            });
+          });
+        }, Promise.resolve(''))
+        .then(finalTranslation => {
+          if (window.UIUtils) {
+            window.UIUtils.updateProgress(95, 'Finalizing translation...');
+          }
+          
+          // Save the translation to the project
+          if (window.quill) {
+            return window.ProjectService.updateProjectOutput(
+              project.id,
+              window.quill.getContents().ops
+            )
+            .then(() => finalTranslation);
+          }
+          
+          return finalTranslation;
+        })
+        .then(finalTranslation => {
+          this.isTranslating = false;
+          this.currentTranslation = finalTranslation;
+          
+          if (window.UIUtils) {
+            window.UIUtils.updateProgress(100, 'Translation complete');
+            window.UIUtils.showNotification('Translation completed successfully', 'success');
+            window.UIUtils.updateLastAction('Translation completed');
+            window.UIUtils.updateWordCounts();
+          }
+          
+          // Verify translation if enabled in project settings
+          if (project.settings?.autoVerify) {
+            this.verifyTranslation(originalText, finalTranslation, project.settings.openRouterModel);
+          }
+          
+          // Hide cancel button
+          const cancelBtn = document.getElementById('cancel-translation-btn');
+          if (cancelBtn) {
+            cancelBtn.style.display = 'none';
+          }
+          
+          if (window.UIUtils) {
+            window.UIUtils.toggleLoading(false);
+            window.UIUtils.toggleProgressBar(false);
+          }
+        });
       })
-      .then(finalTranslation => {
-        if (window.UIUtils) {
-          window.UIUtils.updateProgress(100, 'Translation complete');
-          window.UIUtils.showNotification('Translation completed successfully', 'success');
-          window.UIUtils.updateLastAction('Translation completed');
-          window.UIUtils.updateWordCounts();
-        }
+      .catch(error => {
+        this.isTranslating = false;
         
-        // Verify translation if enabled in project settings
-        if (project.settings?.autoVerify) {
-          this.verifyTranslation(originalText, finalTranslation, project.settings.openRouterModel);
+        // Hide cancel button
+        const cancelBtn = document.getElementById('cancel-translation-btn');
+        if (cancelBtn) {
+          cancelBtn.style.display = 'none';
         }
         
         if (window.UIUtils) {
           window.UIUtils.toggleLoading(false);
           window.UIUtils.toggleProgressBar(false);
+          
+          // Enhanced error message with recovery suggestions
+          let errorMessage = `Translation failed: ${error.message}`;
+          let errorType = 'error';
+          
+          if (error.name === 'AbortError') {
+            errorMessage = 'Translation was cancelled.';
+            errorType = 'info';
+          } else if (error.message.includes('Invalid API key')) {
+            errorMessage += ' Please check your API key in the Settings tab.';
+          } else if (error.message.includes('Rate limit')) {
+            errorMessage += ' Try again in a few minutes or select a different model.';
+          } else if (error.message.includes('too long')) {
+            errorMessage += ' Try using smaller chunks or a model with larger context.';
+          }
+          
+          window.UIUtils.showNotification(errorMessage, errorType);
+          window.UIUtils.updateLastAction('Translation failed');
         }
+        
+        console.error('Translation error:', error);
       });
-    })
-    .catch(error => {
-      if (window.UIUtils) {
-        window.UIUtils.toggleLoading(false);
-        window.UIUtils.toggleProgressBar(false);
-        window.UIUtils.showNotification(`Translation failed: ${error.message}`, 'error');
-        window.UIUtils.updateLastAction('Translation failed');
+  },
+  
+  /**
+   * Basic chunking fallback if TextChunkerService is not available
+   * @param {string} text - Text to chunk
+   * @param {number} chunkSize - Target words per chunk
+   * @returns {Array<string>} Chunked text
+   */
+  chunkText: function(text, chunkSize) {
+    if (!text) return [];
+    if (chunkSize === undefined) chunkSize = 1000;
+    
+    // If text is small enough, return as a single chunk
+    const estimatedWords = text.split(/\s+/).length;
+    if (estimatedWords <= chunkSize) {
+      return [text];
+    }
+    
+    // Split by paragraphs
+    const paragraphs = text.split(/\n\s*\n/);
+    const chunks = [];
+    let currentChunk = [];
+    let currentSize = 0;
+    
+    for (const paragraph of paragraphs) {
+      const paragraphSize = paragraph.split(/\s+/).length;
+      
+      if (currentSize + paragraphSize <= chunkSize) {
+        currentChunk.push(paragraph);
+        currentSize += paragraphSize;
+      } else {
+        if (currentChunk.length > 0) {
+          chunks.push(currentChunk.join('\n\n'));
+          currentChunk = [paragraph];
+          currentSize = paragraphSize;
+        } else {
+          // Paragraph is larger than chunk size, force include it
+          chunks.push(paragraph);
+        }
       }
-      console.error('Translation error:', error);
-    });
-},
+    }
+    
+    // Add the last chunk if there's anything left
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk.join('\n\n'));
+    }
+    
+    return chunks;
+  },
+  
   /**
    * Translate a single chunk using OpenRouter
    * @param {string} chunk - Text chunk to translate
@@ -812,15 +1288,21 @@ processTranslation: function(processedText, originalText, project, strategy, chu
       return Promise.reject(new Error('Model ID is required'));
     }
     
-    // Prepare prompt
-    var prompt = 'Translate this Chinese text to English:';
-    if (customInstructions) {
-      prompt = `${customInstructions}\n\n${prompt}`;
+    // Prepare prompt - use TextUtils if available
+    let prompt = '';
+    if (window.TextUtils && typeof window.TextUtils.generateTranslationPrompt === 'function') {
+      prompt = window.TextUtils.generateTranslationPrompt(chunk, customInstructions);
+    } else {
+      // Fallback prompt generation
+      prompt = 'Translate this Chinese text to English:';
+      if (customInstructions) {
+        prompt = `${customInstructions}\n\n${prompt}`;
+      }
+      prompt = `${prompt}\n\n${chunk}`;
     }
-    prompt = `${prompt}\n\n${chunk}`;
     
     // Check if we should use streaming
-    var useStream = !!progressCallback;
+    const useStream = !!progressCallback;
     
     if (useStream) {
       // Handle streaming response
@@ -903,13 +1385,10 @@ processTranslation: function(processedText, originalText, project, strategy, chu
     }
     
     // Generate the verification prompt
-    var prompt = '';
-    if (window.TextUtils) {
-      prompt = window.TextUtils.generateVerificationPrompt(
-        sourceText,
-        translatedText,
-        []  // We'll get glossary entries separately
-      );
+    let prompt = '';
+    if (window.TextUtils && typeof window.TextUtils.generateVerificationPrompt === 'function') {
+      // This will better handle large texts and include glossary terms
+      prompt = window.TextUtils.generateVerificationPrompt(sourceText, translatedText, []);
     } else {
       prompt = `I'll provide you with a Chinese text and its English translation.
 
@@ -932,22 +1411,22 @@ Respond in JSON format with the following structure:
 }
 
 Chinese Text:
-${sourceText}
+${sourceText.length > 2000 ? sourceText.substring(0, 2000) + '...' : sourceText}
 
 English Translation:
-${translatedText}`;
+${translatedText.length > 2000 ? translatedText.substring(0, 2000) + '...' : translatedText}`;
     }
     
     // Get current project to get glossary entries
-    var currentProject = window.ProjectService.getCurrentProject();
+    const currentProject = window.ProjectService?.getCurrentProject();
     if (currentProject) {
       return window.GlossaryService.getGlossaryEntries(currentProject.id)
         .then(glossaryEntries => {
           // Update prompt with glossary if entries exist
           if (glossaryEntries.length > 0) {
-            var glossarySection = 'Glossary Terms to Check:\n' +
+            const glossarySection = 'Glossary Terms to Check:\n' +
               glossaryEntries
-                .map(function(entry) { return entry.chineseTerm + ': ' + entry.translation; })
+                .map(entry => `${entry.chineseTerm}: ${entry.translation}`)
                 .join('\n');
             
             prompt += '\n\n' + glossarySection;
@@ -964,14 +1443,14 @@ ${translatedText}`;
         })
         .then(response => {
           // Extract JSON from response
-          var jsonStr = response;
-          var jsonMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+          let jsonStr = response;
+          const jsonMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
           if (jsonMatch) {
             jsonStr = jsonMatch[1];
           }
           
           // Parse the JSON
-          var results;
+          let results;
           try {
             results = JSON.parse(jsonStr);
           } catch (error) {
@@ -982,6 +1461,35 @@ ${translatedText}`;
           // Validate the response structure
           if (!results.completeness || !results.accuracy) {
             throw new Error('Invalid verification response format');
+          }
+          
+          // Show detailed verification results to the user
+          if (window.UIUtils) {
+            let notificationType = 'info';
+            
+            // Determine notification type based on scores
+            if (results.accuracy < 70 || results.completeness < 70) {
+              notificationType = 'warning';
+            } else if (results.accuracy >= 90 && results.completeness >= 90) {
+              notificationType = 'success';
+            }
+            
+            let message = `Translation Verification:\n` +
+                          `Accuracy: ${results.accuracy}%, Completeness: ${results.completeness}%\n`;
+            
+            // Add issue summary if there are issues
+            if (results.issues && results.issues.length > 0) {
+              message += `Found ${results.issues.length} issues that may need review.\n`;
+              
+              // Add a few examples if available
+              if (results.issues.length > 0) {
+                message += `Example issue: ${results.issues[0].issue}`;
+              }
+            } else {
+              message += 'No significant issues found.';
+            }
+            
+            window.UIUtils.showNotification(message, notificationType, 10000);
           }
           
           return results;
@@ -997,17 +1505,34 @@ ${translatedText}`;
       )
       .then(response => {
         // Extract and parse JSON
-        var jsonStr = response;
-        var jsonMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+        let jsonStr = response;
+        const jsonMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
         if (jsonMatch) {
           jsonStr = jsonMatch[1];
         }
         
         try {
-          var results = JSON.parse(jsonStr);
+          const results = JSON.parse(jsonStr);
           if (!results.completeness || !results.accuracy) {
             throw new Error('Invalid verification response format');
           }
+          
+          // Show simplified results notification
+          if (window.UIUtils) {
+            let notificationType = 'info';
+            if (results.accuracy < 70 || results.completeness < 70) {
+              notificationType = 'warning';
+            } else if (results.accuracy >= 90 && results.completeness >= 90) {
+              notificationType = 'success';
+            }
+            
+            window.UIUtils.showNotification(
+              `Translation quality: Accuracy ${results.accuracy}%, Completeness ${results.completeness}%`,
+              notificationType,
+              5000
+            );
+          }
+          
           return results;
         } catch (error) {
           console.error('Failed to parse verification response:', response);
@@ -1033,12 +1558,12 @@ ${translatedText}`;
     // Fetch model info to get pricing
     return this.getAvailableModels()
       .then(models => {
-        var modelInfo = models.find(m => m.id === model);
+        const modelInfo = models.find(m => m.id === model);
         
         if (!modelInfo) {
           console.warn(`Model ${model} not found in available models, using default pricing`);
           // Create a dummy model info with zero pricing
-          modelInfo = {
+          return {
             id: model,
             name: model,
             pricing: {
@@ -1048,25 +1573,28 @@ ${translatedText}`;
           };
         }
         
+        return modelInfo;
+      })
+      .then(modelInfo => {
         // Estimate tokens (rough approximation: ~4 chars per token for English, ~2 chars for Chinese)
-        var chineseCharCount = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
-        var otherCharCount = text.length - chineseCharCount;
+        const chineseCharCount = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+        const otherCharCount = text.length - chineseCharCount;
         
-        var tokenEstimate = Math.ceil(chineseCharCount / 2 + otherCharCount / 4);
+        const tokenEstimate = Math.ceil(chineseCharCount / 2 + otherCharCount / 4);
         
         // Add some margin for system messages and instructions
-        var totalTokens = tokenEstimate + 200;
+        const totalTokens = tokenEstimate + 200;
         
         console.log(`Token estimate: ${totalTokens} (${chineseCharCount} Chinese chars, ${otherCharCount} other chars)`);
         
         // Calculate estimated cost
-        var estimatedCost = 0;
+        let estimatedCost = 0;
         if (modelInfo.pricing) {
           // OpenRouter pricing is per 1M tokens
-          var promptCost = (modelInfo.pricing.prompt || 0) * totalTokens / 1000000;
+          const promptCost = (modelInfo.pricing.prompt || 0) * totalTokens / 1000000;
           
           // For completion, assume response is roughly same length as input
-          var completionCost = (modelInfo.pricing.completion || 0) * totalTokens / 1000000;
+          const completionCost = (modelInfo.pricing.completion || 0) * totalTokens / 1000000;
           
           estimatedCost = promptCost + completionCost;
           console.log(`Estimated cost: ${estimatedCost.toFixed(6)} (prompt: ${promptCost.toFixed(6)}, completion: ${completionCost.toFixed(6)})`);
@@ -1075,7 +1603,8 @@ ${translatedText}`;
         return {
           estimatedTokens: totalTokens,
           estimatedCost: estimatedCost,
-          model: modelInfo.name || model
+          model: modelInfo.name || model,
+          contextLength: modelInfo.context_length || 4096
         };
       })
       .catch(error => {
@@ -1085,6 +1614,7 @@ ${translatedText}`;
           estimatedTokens: Math.ceil(text.length / 3) + 200,
           estimatedCost: 0,
           model: model,
+          contextLength: 4096,
           isEstimateError: true
         };
       });
