@@ -91,6 +91,9 @@ window.OpenRouterService = {
     
     // Cancel translation button
     addListener('cancel-translation-btn', 'click', this.cancelTranslation);
+    
+    // Add verify button handler
+    addListener('verify-btn', 'click', this.handleVerifyButtonClick);
   },
   
   /**
@@ -1369,10 +1372,357 @@ getAvailableModels: function(forceRefresh = false) {
   },
   
   /**
+   * Handle click on verify button
+   */
+  handleVerifyButtonClick: function() {
+    const currentProject = window.ProjectService?.getCurrentProject();
+    if (!currentProject) {
+      if (window.UIUtils) {
+        window.UIUtils.showNotification('Please select a project first', 'warning');
+      }
+      return;
+    }
+    
+    // Check if OpenRouter is configured
+    if (!currentProject.settings?.openRouterApiKey) {
+      if (window.UIUtils) {
+        window.UIUtils.showNotification('OpenRouter API key is required for verification. Please configure it in Settings tab.', 'warning');
+      }
+      return;
+    }
+    
+    if (!currentProject.settings?.openRouterModel) {
+      if (window.UIUtils) {
+        window.UIUtils.showNotification('OpenRouter model is not selected. Please select a model in Settings tab.', 'warning');
+      }
+      return;
+    }
+    
+    // Get source text from input
+    const sourceText = document.getElementById('input-text')?.value?.trim();
+    if (!sourceText) {
+      if (window.UIUtils) {
+        window.UIUtils.showNotification('Source text is required for verification', 'warning');
+      }
+      return;
+    }
+    
+    // Get translated text from Quill editor
+    let translatedText = '';
+    if (window.quill) {
+      translatedText = window.quill.getText().trim();
+    }
+    
+    if (!translatedText) {
+      if (window.UIUtils) {
+        window.UIUtils.showNotification('No translation to verify', 'warning');
+      }
+      return;
+    }
+    
+    // Show loading state
+    if (window.UIUtils) {
+      window.UIUtils.toggleLoading(true, 'Verifying translation...');
+      window.UIUtils.toggleProgressBar(true);
+      window.UIUtils.updateProgress(0, 'Preparing verification...');
+    }
+    
+    // Run verification
+    this.verifyTranslation(sourceText, translatedText, currentProject.settings.openRouterModel)
+      .then(results => {
+        // Enhanced results display
+        this.displayVerificationResults(results, sourceText, translatedText);
+        
+        if (window.UIUtils) {
+          window.UIUtils.toggleLoading(false);
+          window.UIUtils.toggleProgressBar(false);
+          window.UIUtils.updateLastAction('Translation verification completed');
+        }
+      })
+      .catch(error => {
+        console.error('Verification error:', error);
+        if (window.UIUtils) {
+          window.UIUtils.toggleLoading(false);
+          window.UIUtils.toggleProgressBar(false);
+          window.UIUtils.showNotification(`Verification failed: ${error.message}`, 'error');
+          window.UIUtils.updateLastAction('Translation verification failed');
+        }
+      });
+  },
+  
+  /**
+   * Display verification results in a user-friendly way
+   * @param {Object} results - Verification results from OpenRouter
+   * @param {string} sourceText - Original text
+   * @param {string} translatedText - Translated text
+   */
+  displayVerificationResults: function(results, sourceText, translatedText) {
+    // Create modal if it doesn't exist
+    this.createVerificationResultsModal();
+    
+    // Quality scores
+    const accuracy = results.accuracy || 0;
+    const completeness = results.completeness || 0;
+    const averageScore = Math.round((accuracy + completeness) / 2);
+    
+    // Determine overall quality level
+    let qualityLevel, qualityClass;
+    if (averageScore >= 90) {
+      qualityLevel = 'Excellent';
+      qualityClass = 'success';
+    } else if (averageScore >= 75) {
+      qualityLevel = 'Good';
+      qualityClass = 'info';
+    } else if (averageScore >= 60) {
+      qualityLevel = 'Fair';
+      qualityClass = 'warning';
+    } else {
+      qualityLevel = 'Poor';
+      qualityClass = 'error';
+    }
+    
+    // Update modal content
+    const modalTitle = document.getElementById('verification-modal-title');
+    if (modalTitle) {
+      modalTitle.textContent = `Translation Quality: ${qualityLevel}`;
+      modalTitle.className = qualityClass;
+    }
+    
+    // Update scores
+    const accuracyScore = document.getElementById('accuracy-score');
+    if (accuracyScore) {
+      accuracyScore.textContent = `${Math.round(accuracy)}%`;
+      accuracyScore.className = this.getScoreClass(accuracy);
+    }
+    
+    const completenessScore = document.getElementById('completeness-score');
+    if (completenessScore) {
+      completenessScore.textContent = `${Math.round(completeness)}%`;
+      completenessScore.className = this.getScoreClass(completeness);
+    }
+    
+    // Process issues
+    const issuesList = document.getElementById('verification-issues-list');
+    if (issuesList) {
+      issuesList.innerHTML = '';
+      
+      if (!results.issues || results.issues.length === 0) {
+        const noIssues = document.createElement('li');
+        noIssues.className = 'no-issues';
+        noIssues.textContent = 'No significant issues found in the translation.';
+        issuesList.appendChild(noIssues);
+      } else {
+        // Sort issues by severity (implied by the difference between source and translation)
+        results.issues.sort((a, b) => {
+          const aLen = a.sourceText ? a.sourceText.length : 0;
+          const bLen = b.sourceText ? b.sourceText.length : 0;
+          return bLen - aLen; // Longer source text first (likely more important)
+        });
+        
+        // Add issues to the list
+        results.issues.forEach(issue => {
+          const issueItem = document.createElement('li');
+          issueItem.className = 'issue-item';
+          
+          const issueContent = document.createElement('div');
+          issueContent.className = 'issue-content';
+          
+          // Issue description
+          const issueDesc = document.createElement('p');
+          issueDesc.className = 'issue-description';
+          issueDesc.textContent = issue.issue;
+          issueContent.appendChild(issueDesc);
+          
+          // Source and translation comparison
+          if (issue.sourceText && issue.translatedText) {
+            const comparison = document.createElement('div');
+            comparison.className = 'text-comparison';
+            
+            const sourceDiv = document.createElement('div');
+            sourceDiv.className = 'source-text';
+            sourceDiv.innerHTML = '<strong>Source:</strong> ' + issue.sourceText;
+            
+            const translatedDiv = document.createElement('div');
+            translatedDiv.className = 'translated-text';
+            translatedDiv.innerHTML = '<strong>Translation:</strong> ' + issue.translatedText;
+            
+            comparison.appendChild(sourceDiv);
+            comparison.appendChild(translatedDiv);
+            issueContent.appendChild(comparison);
+          }
+          
+          // Suggestion
+          if (issue.suggestion) {
+            const suggestion = document.createElement('div');
+            suggestion.className = 'suggestion';
+            suggestion.innerHTML = '<strong>Suggestion:</strong> ' + issue.suggestion;
+            issueContent.appendChild(suggestion);
+            
+            // Add apply button if we have a suggestion
+            const applyBtn = document.createElement('button');
+            applyBtn.className = 'small-btn apply-suggestion';
+            applyBtn.textContent = 'Apply Suggestion';
+            applyBtn.addEventListener('click', function() {
+              // Apply the suggestion by replacing the issue.translatedText with issue.suggestion in the Quill editor
+              if (window.quill) {
+                const currentText = window.quill.getText();
+                const newText = currentText.replace(issue.translatedText, issue.suggestion);
+                window.quill.setText(newText);
+                
+                // Save the change to the project
+                const currentProject = window.ProjectService?.getCurrentProject();
+                if (currentProject) {
+                  window.ProjectService.updateProjectOutput(
+                    currentProject.id,
+                    window.quill.getContents().ops
+                  );
+                }
+                
+                // Disable the button
+                applyBtn.disabled = true;
+                applyBtn.textContent = 'Applied';
+                
+                if (window.UIUtils) {
+                  window.UIUtils.showNotification('Suggestion applied', 'success');
+                  window.UIUtils.updateLastAction('Translation updated with suggestion');
+                }
+              }
+            });
+            issueContent.appendChild(applyBtn);
+          }
+          
+          issueItem.appendChild(issueContent);
+          issuesList.appendChild(issueItem);
+        });
+      }
+    }
+    
+    // Missing content
+    const missingContent = document.getElementById('missing-content-list');
+    if (missingContent) {
+      missingContent.innerHTML = '';
+      
+      if (!results.missingContent || results.missingContent.length === 0) {
+        const noMissing = document.createElement('li');
+        noMissing.textContent = 'No missing content detected.';
+        missingContent.appendChild(noMissing);
+      } else {
+        results.missingContent.forEach(item => {
+          const listItem = document.createElement('li');
+          listItem.textContent = item;
+          missingContent.appendChild(listItem);
+        });
+      }
+    }
+    
+    // Show the modal
+    const modal = document.getElementById('verification-results-modal');
+    if (modal) {
+      modal.style.display = 'flex';
+    }
+    
+    // Show summary notification
+    if (window.UIUtils) {
+      const message = `Translation quality: ${qualityLevel} (${Math.round(averageScore)}%)\n` +
+                      `Accuracy: ${Math.round(accuracy)}%, Completeness: ${Math.round(completeness)}%`;
+      window.UIUtils.showNotification(message, qualityClass.toLowerCase(), 6000);
+    }
+  },
+  
+  /**
+   * Get CSS class based on score
+   * @param {number} score - Score from 0-100
+   * @returns {string} CSS class name
+   */
+  getScoreClass: function(score) {
+    if (score >= 90) return 'score success';
+    if (score >= 75) return 'score info';
+    if (score >= 60) return 'score warning';
+    return 'score error';
+  },
+  
+  /**
+   * Create verification results modal if it doesn't exist
+   */
+  createVerificationResultsModal: function() {
+    // Check if modal already exists
+    if (document.getElementById('verification-results-modal')) {
+      return;
+    }
+    
+    // Create modal
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.id = 'verification-results-modal';
+    
+    // Modal content
+    modal.innerHTML = `
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="verification-modal-title">Translation Quality</h3>
+          <button class="modal-close-btn">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="verification-scores">
+            <div class="score-item">
+              <div class="score-label">Accuracy</div>
+              <div id="accuracy-score" class="score">--</div>
+            </div>
+            <div class="score-item">
+              <div class="score-label">Completeness</div>
+              <div id="completeness-score" class="score">--</div>
+            </div>
+          </div>
+          
+          <h4>Issues Found</h4>
+          <ul id="verification-issues-list" class="issues-list">
+            <li>Loading issues...</li>
+          </ul>
+          
+          <h4>Missing Content</h4>
+          <ul id="missing-content-list" class="missing-content-list">
+            <li>Loading missing content...</li>
+          </ul>
+        </div>
+        <div class="modal-footer">
+          <button id="close-verification-modal-btn" class="secondary-btn">
+            <i class="fas fa-times"></i> Close
+          </button>
+        </div>
+      </div>
+    `;
+    
+    // Add event listeners
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        modal.style.display = 'none';
+      }
+    });
+    
+    // Add to document
+    document.body.appendChild(modal);
+    
+    // Setup close button
+    const closeBtn = modal.querySelector('.modal-close-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function() {
+        modal.style.display = 'none';
+      });
+    }
+    
+    const closeModalBtn = modal.querySelector('#close-verification-modal-btn');
+    if (closeModalBtn) {
+      closeModalBtn.addEventListener('click', function() {
+        modal.style.display = 'none';
+      });
+    }
+  },
+  
+  /**
    * Verify translation quality
    * @param {string} sourceText - Original Chinese text
    * @param {string} translatedText - English translation
-   * @param {string} model - Model ID to use
+   * @param {string} model - Model ID to use for verification
    * @returns {Promise<Object>} Verification results
    */
   verifyTranslation: function(sourceText, translatedText, model) {
@@ -1384,14 +1734,146 @@ getAvailableModels: function(forceRefresh = false) {
       return Promise.reject(new Error('Model ID is required'));
     }
     
+    // Get current project to get glossary entries
+    const currentProject = window.ProjectService?.getCurrentProject();
+    
     // Generate the verification prompt
     let prompt = '';
     if (window.TextUtils && typeof window.TextUtils.generateVerificationPrompt === 'function') {
-      // This will better handle large texts and include glossary terms
-      prompt = window.TextUtils.generateVerificationPrompt(sourceText, translatedText, []);
+      // First get glossary entries if we have a current project
+      if (currentProject) {
+        return window.GlossaryService.getGlossaryEntries(currentProject.id)
+          .then(glossaryEntries => {
+            prompt = window.TextUtils.generateVerificationPrompt(sourceText, translatedText, glossaryEntries);
+            
+            // Update progress
+            if (window.UIUtils) {
+              window.UIUtils.updateProgress(30, 'Analyzing translation...');
+            }
+            
+            // Request verification from OpenRouter
+            return this.generateCompletion(
+              model,
+              prompt,
+              0.2,  // Very low temperature for consistent JSON
+              2000, // Enough tokens for detailed verification
+              false // Don't stream
+            );
+          })
+          .then(response => {
+            // Process the response
+            return this._processVerificationResponse(response);
+          });
+      } else {
+        // No project, just use empty glossary
+        prompt = window.TextUtils.generateVerificationPrompt(sourceText, translatedText, []);
+      }
     } else {
-      prompt = `I'll provide you with a Chinese text and its English translation.
-
+      // Use a simple fallback prompt
+      prompt = this._generateFallbackVerificationPrompt(sourceText, translatedText);
+    }
+    
+    // Update progress
+    if (window.UIUtils) {
+      window.UIUtils.updateProgress(30, 'Analyzing translation...');
+    }
+    
+    // Request verification from OpenRouter
+    return this.generateCompletion(
+      model,
+      prompt,
+      0.2,  // Very low temperature for consistent JSON
+      2000, // Enough tokens for detailed verification
+      false // Don't stream
+    )
+    .then(response => {
+      // Process the response
+      return this._processVerificationResponse(response);
+    });
+  },
+  
+  /**
+   * Process verification response from OpenRouter
+   * @param {string} response - Raw response text
+   * @returns {Object} Parsed verification results
+   * @private
+   */
+  _processVerificationResponse: function(response) {
+    // Update progress
+    if (window.UIUtils) {
+      window.UIUtils.updateProgress(70, 'Processing results...');
+    }
+    
+    // Extract JSON from response
+    let jsonStr = response;
+    const jsonMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[1];
+    }
+    
+    // Parse the JSON
+    let results;
+    try {
+      results = JSON.parse(jsonStr);
+    } catch (error) {
+      console.error('Failed to parse verification response:', response);
+      
+      // Try a more permissive extraction
+      try {
+        const match = response.match(/\{[\s\S]*?\}/);
+        if (match) {
+          results = JSON.parse(match[0]);
+        } else {
+          throw new Error('Invalid JSON response');
+        }
+      } catch (e) {
+        throw new Error('Invalid JSON response from verification service');
+      }
+    }
+    
+    // Validate and normalize the response structure
+    if (!results.completeness && !results.accuracy) {
+      throw new Error('Invalid verification response format');
+    }
+    
+    // Ensure all required fields exist
+    const normalizedResults = {
+      completeness: results.completeness || 0,
+      accuracy: results.accuracy || 0,
+      issues: results.issues || [],
+      missingContent: results.missingContent || []
+    };
+    
+    // Update progress
+    if (window.UIUtils) {
+      window.UIUtils.updateProgress(100, 'Verification complete');
+    }
+    
+    return normalizedResults;
+  },
+  
+  /**
+   * Generate a fallback verification prompt if TextUtils is not available
+   * @param {string} sourceText - Original Chinese text
+   * @param {string} translatedText - English translation
+   * @returns {string} Verification prompt
+   * @private
+   */
+  _generateFallbackVerificationPrompt: function(sourceText, translatedText) {
+    // Truncate texts if they're too long
+    const MAX_LENGTH = 2000;
+    let truncatedSourceText = sourceText;
+    let truncatedTranslatedText = translatedText;
+    
+    if (sourceText.length > MAX_LENGTH) {
+      truncatedSourceText = sourceText.substring(0, MAX_LENGTH) + '...';
+    }
+    
+    if (translatedText.length > MAX_LENGTH) {
+      truncatedTranslatedText = translatedText.substring(0, MAX_LENGTH) + '...';
+    }
+    
+    return `Analyze this Chinese to English translation for quality and completeness.
 Please verify the translation and check for:
 
 1. Completeness: Ensure all content from the source is present in the translation.
@@ -1411,135 +1893,10 @@ Respond in JSON format with the following structure:
 }
 
 Chinese Text:
-${sourceText.length > 2000 ? sourceText.substring(0, 2000) + '...' : sourceText}
+${truncatedSourceText}
 
 English Translation:
-${translatedText.length > 2000 ? translatedText.substring(0, 2000) + '...' : translatedText}`;
-    }
-    
-    // Get current project to get glossary entries
-    const currentProject = window.ProjectService?.getCurrentProject();
-    if (currentProject) {
-      return window.GlossaryService.getGlossaryEntries(currentProject.id)
-        .then(glossaryEntries => {
-          // Update prompt with glossary if entries exist
-          if (glossaryEntries.length > 0) {
-            const glossarySection = 'Glossary Terms to Check:\n' +
-              glossaryEntries
-                .map(entry => `${entry.chineseTerm}: ${entry.translation}`)
-                .join('\n');
-            
-            prompt += '\n\n' + glossarySection;
-          }
-          
-          // Request verification from OpenRouter
-          return this.generateCompletion(
-            model,
-            prompt,
-            0.2,  // Very low temperature for consistent JSON
-            2000, // Enough tokens for detailed verification
-            false // Don't stream
-          );
-        })
-        .then(response => {
-          // Extract JSON from response
-          let jsonStr = response;
-          const jsonMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-          if (jsonMatch) {
-            jsonStr = jsonMatch[1];
-          }
-          
-          // Parse the JSON
-          let results;
-          try {
-            results = JSON.parse(jsonStr);
-          } catch (error) {
-            console.error('Failed to parse verification response:', response);
-            throw new Error('Invalid JSON response from verification service');
-          }
-          
-          // Validate the response structure
-          if (!results.completeness || !results.accuracy) {
-            throw new Error('Invalid verification response format');
-          }
-          
-          // Show detailed verification results to the user
-          if (window.UIUtils) {
-            let notificationType = 'info';
-            
-            // Determine notification type based on scores
-            if (results.accuracy < 70 || results.completeness < 70) {
-              notificationType = 'warning';
-            } else if (results.accuracy >= 90 && results.completeness >= 90) {
-              notificationType = 'success';
-            }
-            
-            let message = `Translation Verification:\n` +
-                          `Accuracy: ${results.accuracy}%, Completeness: ${results.completeness}%\n`;
-            
-            // Add issue summary if there are issues
-            if (results.issues && results.issues.length > 0) {
-              message += `Found ${results.issues.length} issues that may need review.\n`;
-              
-              // Add a few examples if available
-              if (results.issues.length > 0) {
-                message += `Example issue: ${results.issues[0].issue}`;
-              }
-            } else {
-              message += 'No significant issues found.';
-            }
-            
-            window.UIUtils.showNotification(message, notificationType, 10000);
-          }
-          
-          return results;
-        });
-    } else {
-      // If no project, just do basic verification without glossary
-      return this.generateCompletion(
-        model,
-        prompt,
-        0.2,
-        2000,
-        false
-      )
-      .then(response => {
-        // Extract and parse JSON
-        let jsonStr = response;
-        const jsonMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-        if (jsonMatch) {
-          jsonStr = jsonMatch[1];
-        }
-        
-        try {
-          const results = JSON.parse(jsonStr);
-          if (!results.completeness || !results.accuracy) {
-            throw new Error('Invalid verification response format');
-          }
-          
-          // Show simplified results notification
-          if (window.UIUtils) {
-            let notificationType = 'info';
-            if (results.accuracy < 70 || results.completeness < 70) {
-              notificationType = 'warning';
-            } else if (results.accuracy >= 90 && results.completeness >= 90) {
-              notificationType = 'success';
-            }
-            
-            window.UIUtils.showNotification(
-              `Translation quality: Accuracy ${results.accuracy}%, Completeness ${results.completeness}%`,
-              notificationType,
-              5000
-            );
-          }
-          
-          return results;
-        } catch (error) {
-          console.error('Failed to parse verification response:', response);
-          throw new Error('Invalid JSON response from verification service');
-        }
-      });
-    }
+${truncatedTranslatedText}`;
   },
   
   /**
