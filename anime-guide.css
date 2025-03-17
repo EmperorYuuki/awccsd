@@ -1,0 +1,223 @@
+/* Anime Guide Character Styles */
+.anime-guide {
+    transition: opacity var(--transition-normal);
+  }
+  
+  .anime-guide.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+  
+  /* Character Container */
+  .anime-character {
+    position: relative;
+    transition: transform var(--transition-normal);
+  }
+  
+  /* Base character styles for different themes */
+  .anime-character[data-style="kawaii"] {
+    background-image: url('../assets/anime-guide/kawaii-base.png');
+  }
+  
+  .anime-character[data-style="chibi"] {
+    background-image: url('../assets/anime-guide/chibi-base.png');
+  }
+  
+  .anime-character[data-style="classic"] {
+    background-image: url('../assets/anime-guide/classic-base.png');
+  }
+  
+  /* Hair color customization using CSS filters */
+  .anime-character[data-hair-color="pink"] {
+    filter: none; /* Default pink hair */
+  }
+  
+  .anime-character[data-hair-color="blue"] {
+    filter: hue-rotate(240deg);
+  }
+  
+  .anime-character[data-hair-color="purple"] {
+    filter: hue-rotate(270deg);
+  }
+  
+  .anime-character[data-hair-color="red"] {
+    filter: hue-rotate(330deg);
+  }
+  
+  .anime-character[data-hair-color="green"] {
+    filter: hue-rotate(120deg);
+  }
+  
+  .anime-character[data-hair-color="yellow"] {
+    filter: hue-rotate(60deg) saturate(1.5);
+  }
+  
+  
+  /* Message animation */
+  .guide-message {
+    animation: message-pop 0.3s ease-out forwards;
+  }
+  
+  @keyframes message-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.8) translateY(10px);
+    }
+    70% {
+      transform: scale(1.05) translateY(-2px);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+  
+  /* Character animations */
+  .anime-character.idle {
+    animation: idle-floating 3s ease-in-out infinite;
+  }
+  
+  .anime-character.talking {
+    animation: talking 0.5s ease-in-out infinite alternate;
+  }
+  
+  .anime-character.waving {
+    animation: waving 1s ease-in-out;
+  }
+  
+  .anime-character.pointing {
+    animation: pointing 1s ease-in-out;
+  }
+  
+  .anime-character.happy {
+    animation: happy-bounce 0.5s ease-in-out;
+  }
+  
+  @keyframes idle-floating {
+    0% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-5px);
+    }
+    100% {
+      transform: translateY(0);
+    }
+  }
+  
+  @keyframes talking {
+    0% {
+      transform: translateY(0) scale(1);
+    }
+    100% {
+      transform: translateY(-3px) scale(1.03);
+    }
+  }
+  
+  @keyframes waving {
+    0% {
+      transform: rotate(0deg);
+    }
+    25% {
+      transform: rotate(15deg);
+    }
+    50% {
+      transform: rotate(0deg);
+    }
+    75% {
+      transform: rotate(15deg);
+    }
+    100% {
+      transform: rotate(0deg);
+    }
+  }
+  
+  @keyframes pointing {
+    0% {
+      transform: translateX(0);
+    }
+    25% {
+      transform: translateX(-10px);
+    }
+    75% {
+      transform: translateX(5px);
+    }
+    100% {
+      transform: translateX(0);
+    }
+  }
+  
+  @keyframes happy-bounce {
+    0% {
+      transform: translateY(0) scale(1);
+    }
+    50% {
+      transform: translateY(-10px) scale(1.1);
+    }
+    100% {
+      transform: translateY(0) scale(1);
+    }
+  }
+  
+  /* Guide message typing effect */
+  .typing-effect {
+    border-right: 2px solid var(--accent-color);
+    white-space: nowrap;
+    overflow: hidden;
+    width: 0;
+    animation: typing 1s steps(30, end) forwards;
+  }
+  
+  @keyframes typing {
+    from {
+      width: 0;
+    }
+    to {
+      width: 100%;
+    }
+  }
+  
+  /* Preview container styling */
+  #anime-guide-preview-container {
+    position: relative;
+  }
+  
+  #anime-guide-preview-container .anime-character {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  
+  #anime-guide-preview-container .guide-message {
+    position: absolute;
+    bottom: 160px;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 0;
+  }
+  
+  /* Tutorial step indicators */
+  .tutorial-steps {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+  }
+  
+  .step-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    transition: background var(--transition-fast);
+  }
+  
+  .step-indicator.active {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
