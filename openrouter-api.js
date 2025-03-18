@@ -7,6 +7,7 @@
 window.OpenRouterService = {
   // Constants
   BASE_URL: 'https://openrouter.ai/api/v1',
+  CACHE_VERSION: '1.1', // Added version for cache to handle API changes
   
   // Cache for models
   modelsCache: null,
@@ -237,29 +238,54 @@ window.OpenRouterService = {
   getRecommendedModel: function(models) {
     if (!Array.isArray(models) || models.length === 0) return null;
     
-    // Try to find Claude or GPT model with good balance of capability and speed
-    const preferredModels = [
-      'anthropic/claude-3-opus',
-      'anthropic/claude-3-sonnet',
-      'anthropic/claude-3-haiku',
-      'openai/gpt-4-turbo',
-      'google/gemini-pro'
-    ];
+    // Instead of hardcoded model names, evaluate based on capabilities and metadata
+    // First, sort models by a combination of factors: context length, pricing, and reliability
+    const sortedModels = [...models].sort((a, b) => {
+      // Filter out models without proper data
+      if (!a.pricing || !b.pricing) {
+        return 0;  // Can't compare properly, keep original order
+      }
+      
+      // Prioritize models with higher context length
+      const aContextLength = a.context_length || 0;
+      const bContextLength = b.context_length || 0;
+      
+      if (aContextLength !== bContextLength) {
+        return bContextLength - aContextLength; // Higher context length first
+      }
+      
+      // Compare prompt and completion pricing
+      const aPromptPrice = parseFloat(a.pricing.prompt || 0);
+      const bPromptPrice = parseFloat(b.pricing.prompt || 0);
+      const aCompletionPrice = parseFloat(a.pricing.completion || 0);
+      const bCompletionPrice = parseFloat(b.pricing.completion || 0);
+      
+      // Calculate an overall "price score" - balance quality and cost
+      // For premium models, being cheaper is better
+      // For economy models, being free might indicate limited capabilities
+      
+      // Look at provider reputation - certain providers are known for quality
+      const providerScore = (model) => {
+        const provider = model.id?.split('/')[0] || '';
+        // Higher score for known reliable providers
+        if (provider === 'anthropic' || provider === 'openai' || provider === 'google') {
+          return 2;
+        }
+        if (provider === 'mistralai' || provider === 'meta') {
+          return 1.5;
+        }
+        return 1;
+      };
+      
+      const aScore = (aPromptPrice + aCompletionPrice) * (1 / providerScore(a));
+      const bScore = (bPromptPrice + bCompletionPrice) * (1 / providerScore(b));
+      
+      // For comparable models (similar context), prefer balanced pricing
+      return aScore - bScore;
+    });
     
-    for (const preferredId of preferredModels) {
-      const model = models.find(m => m.id === preferredId);
-      if (model) return model;
-    }
-    
-    // Fall back to any Claude or GPT model
-    const claudeModel = models.find(m => m.id.includes('claude'));
-    if (claudeModel) return claudeModel;
-    
-    const gptModel = models.find(m => m.id.includes('gpt'));
-    if (gptModel) return gptModel;
-    
-    // If no preferred models found, return the first available
-    return models[0];
+    // Return the top recommended model
+    return sortedModels[0] || null;
   },
   
   /**
@@ -279,10 +305,10 @@ window.OpenRouterService = {
     
     const apiKey = apiKeyInput.value.trim();
     
-    // Validate API key format (basic check)
-    if (apiKey && !apiKey.match(/^[a-zA-Z0-9_-]{30,}$/)) {
+    // Enhanced validation for API key format
+    if (apiKey && !apiKey.match(/^(sk-or[-_a-zA-Z0-9]{10,})$/)) {
       if (window.UIUtils) {
-        window.UIUtils.showNotification('The API key format appears invalid. Please check it.', 'warning');
+        window.UIUtils.showNotification('The API key format appears invalid. OpenRouter keys should start with "sk-or-".', 'warning');
       }
       // Continue anyway as the format might vary
     }
@@ -334,7 +360,7 @@ window.OpenRouterService = {
           if (selectedModel?.pricing) {
             const promptPrice = parseFloat(selectedModel.pricing.prompt || 0).toFixed(4);
             const completionPrice = parseFloat(selectedModel.pricing.completion || 0).toFixed(4);
-            message += ` (Pricing: ${promptPrice}/${completionPrice} per 1M tokens)`;
+            message += ` (Pricing: $${promptPrice}/$${completionPrice} per 1M tokens)`;
           }
           
           window.UIUtils.updateLastAction(message);
@@ -401,13 +427,14 @@ getAvailableModels: function(forceRefresh = false) {
     return Promise.resolve(this.modelsCache);
   }
   
-  // Check for models in localStorage cache
+  // Check for models in localStorage cache with version check
   if (!forceRefresh && !this.modelsCache) {
     try {
+      const cacheVersion = localStorage.getItem('openrouter_models_version');
       const cachedData = localStorage.getItem('openrouter_models_cache');
       const cacheTimestamp = localStorage.getItem('openrouter_models_timestamp');
       
-      if (cachedData && cacheTimestamp) {
+      if (cachedData && cacheTimestamp && cacheVersion === this.CACHE_VERSION) {
         const parsedData = JSON.parse(cachedData);
         const timestamp = parseInt(cacheTimestamp, 10);
         
@@ -462,7 +489,7 @@ getAvailableModels: function(forceRefresh = false) {
           if (response.status === 401) {
             throw new Error('API key is invalid or expired. Please check your OpenRouter API key.');
           } else if (response.status === 429) {
-            throw new Error('Rate limit exceeded. Please try again later.');
+            throw new Error('Rate limit exceeded. Please try again later or request a higher rate limit.');
           } else {
             throw new Error(`API request failed with status ${response.status}: ${errorData.error?.message || errorData.message || text}`);
           }
@@ -557,8 +584,9 @@ getAvailableModels: function(forceRefresh = false) {
     this.modelsCache = enhancedModels;
     this.lastModelsFetch = now;
     
-    // Save to localStorage cache
+    // Save to localStorage cache with version info
     try {
+      localStorage.setItem('openrouter_models_version', this.CACHE_VERSION);
       localStorage.setItem('openrouter_models_cache', JSON.stringify(enhancedModels));
       localStorage.setItem('openrouter_models_timestamp', now.toString());
       console.log('Models cached to localStorage successfully');
@@ -599,10 +627,17 @@ getAvailableModels: function(forceRefresh = false) {
       'openai': 'OpenAI',
       'anthropic': 'Anthropic',
       'google': 'Google',
-      'mistral': 'Mistral AI',
+      'mistralai': 'Mistral AI',
       'meta': 'Meta',
+      'meta-llama': 'Meta',
       'cohere': 'Cohere',
-      'azure': 'Azure'
+      'azure': 'Azure',
+      'deepseek': 'DeepSeek',
+      'fireworks': 'Fireworks',
+      'groq': 'Groq',
+      'together': 'Together',
+      'perplexity': 'Perplexity',
+      'ai21': 'AI21 Labs'
     };
     
     return providerNames[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
@@ -614,29 +649,24 @@ getAvailableModels: function(forceRefresh = false) {
    * @returns {string} Category label ('premium', 'balanced', 'economy')
    */
   categorizeModel: function(model) {
-    // Premium models - high capability, usually higher cost
-    if (model.id && (
-        model.id.includes('gpt-4') || 
-        model.id.includes('claude-3-opus') || 
-        model.id.includes('claude-3-sonnet') || 
-        model.id.includes('gemini-pro') ||
-        model.id.includes('gemini-1.5')
-    )) {
+    // No model data
+    if (!model || !model.pricing) return 'economy';
+    
+    const promptPrice = parseFloat(model.pricing.prompt || '0');
+    const completionPrice = parseFloat(model.pricing.completion || '0');
+    const contextLength = model.context_length || 0;
+    
+    // Premium: Higher price and larger context
+    if ((promptPrice > 0.01 || completionPrice > 0.02) && contextLength >= 16000) {
       return 'premium';
     }
     
-    // Balanced models - good capability with moderate cost
-    if (model.id && (
-        model.id.includes('gpt-3.5') || 
-        model.id.includes('claude-3-haiku') || 
-        model.id.includes('claude-instant') ||
-        model.id.includes('mistral-medium') ||
-        model.id.includes('mistral-large')
-    )) {
+    // Balanced: Moderate price and decent context
+    if ((promptPrice > 0.001 || completionPrice > 0.002) && contextLength >= 8000) {
       return 'balanced';
     }
     
-    // Economy models - more affordable but potentially less capable
+    // Economy: Everything else
     return 'economy';
   },
   
@@ -771,16 +801,42 @@ getAvailableModels: function(forceRefresh = false) {
           
           // Restore previously selected model if any
           const currentProject = window.ProjectService?.getCurrentProject();
-          if (currentProject?.settings?.openRouterModel) {
-            selectElement.value = currentProject.settings.openRouterModel;
-            
-            // If the saved model doesn't exist in the list, show a warning
-            if (selectElement.value !== currentProject.settings.openRouterModel) {
-              if (window.UIUtils) {
-                window.UIUtils.showNotification(
-                  'The previously selected model is no longer available. Please select a new model.',
-                  'warning'
-                );
+          if (currentProject) {
+            if (currentProject.settings?.openRouterModel) {
+              selectElement.value = currentProject.settings.openRouterModel;
+              
+              // If the saved model doesn't exist in the list, show a warning and select a default
+              if (selectElement.value !== currentProject.settings.openRouterModel) {
+                console.warn(`Saved model ${currentProject.settings.openRouterModel} not found in available models`);
+                
+                // Find and select a good default model based on capabilities
+                const recommendedModel = this.getRecommendedModel(models);
+                if (recommendedModel) {
+                  selectElement.value = recommendedModel.id;
+                  
+                  // Update project settings with the new model
+                  window.ProjectService.updateProjectSettings(currentProject.id, {
+                    openRouterModel: recommendedModel.id
+                  }).catch(err => console.error('Error updating model setting:', err));
+                  
+                  if (window.UIUtils) {
+                    window.UIUtils.showNotification(
+                      `Previous model not available. Using ${recommendedModel.name || recommendedModel.id} instead.`,
+                      'info'
+                    );
+                  }
+                }
+              }
+            } else if (models.length > 0) {
+              // No model previously selected, select recommended model
+              const recommendedModel = this.getRecommendedModel(models);
+              if (recommendedModel) {
+                selectElement.value = recommendedModel.id;
+                
+                // Update project settings with the new model
+                window.ProjectService.updateProjectSettings(currentProject.id, {
+                  openRouterModel: recommendedModel.id
+                }).catch(err => console.error('Error updating model setting:', err));
               }
             }
           }
@@ -851,7 +907,7 @@ getAvailableModels: function(forceRefresh = false) {
     
     // Set request timeout
     const timeoutId = setTimeout(() => {
-      this.abortController.abort();
+      this.abortController.abort('timeout');
     }, 120000); // 2 minutes timeout
     
     return fetch(`${this.BASE_URL}/chat/completions`, {
@@ -875,13 +931,17 @@ getAvailableModels: function(forceRefresh = false) {
             const errorData = JSON.parse(text);
             console.error('OpenRouter completion error:', errorData);
             
-            // Enhanced error messages
+            // Enhanced error messages with more details
             if (response.status === 401) {
               throw new Error('API key is invalid or expired. Please check your OpenRouter API key.');
             } else if (response.status === 429) {
               throw new Error('Rate limit exceeded. Please try again later or use a different model.');
             } else if (response.status === 400 && text.includes('context')) {
-              throw new Error('Input is too long for this model. Please try a smaller chunk or different model.');
+              throw new Error('Input is too long for this model. Please try a smaller chunk or select a model with larger context window.');
+            } else if (response.status === 404) {
+              throw new Error('The requested model was not found. It may have been discontinued or renamed.');
+            } else if (response.status === 402) {
+              throw new Error('Insufficient credits. Please add more credits to your OpenRouter account.');
             } else {
               throw new Error(`API request failed with status ${response.status}: ${errorData.error?.message || errorData.message || text}`);
             }
@@ -915,7 +975,7 @@ getAvailableModels: function(forceRefresh = false) {
     .catch(error => {
       clearTimeout(timeoutId);
       
-      // Enhanced error handling
+      // Enhanced error handling with more specific categories
       if (error.name === 'AbortError') {
         if (this.abortController.signal.reason === 'timeout') {
           console.error('Request timed out');
@@ -924,6 +984,16 @@ getAvailableModels: function(forceRefresh = false) {
           console.error('Request was cancelled');
           throw new Error('Translation request was cancelled.');
         }
+      }
+      
+      // Handle rate limiting more gracefully
+      if (error.message.includes('429') || error.message.toLowerCase().includes('rate limit')) {
+        throw new Error('Rate limit exceeded. Please wait a moment before trying again, or switch to a different model.');
+      }
+      
+      // Handle context length errors
+      if (error.message.includes('context length') || error.message.includes('token limit')) {
+        throw new Error('The text is too long for this model. Try breaking it into smaller chunks or selecting a model with larger context window.');
       }
       
       console.error('Error generating completion:', error);
@@ -1216,6 +1286,8 @@ getAvailableModels: function(forceRefresh = false) {
             errorMessage += ' Try again in a few minutes or select a different model.';
           } else if (error.message.includes('too long')) {
             errorMessage += ' Try using smaller chunks or a model with larger context.';
+          } else if (error.message.includes('Insufficient credits')) {
+            errorMessage += ' Please add more credits to your OpenRouter account.';
           }
           
           window.UIUtils.showNotification(errorMessage, errorType);
@@ -1227,7 +1299,7 @@ getAvailableModels: function(forceRefresh = false) {
   },
   
   /**
-   * Basic chunking fallback if TextChunkerService is not available
+   * Enhanced text chunking with chapter and paragraph awareness
    * @param {string} text - Text to chunk
    * @param {number} chunkSize - Target words per chunk
    * @returns {Array<string>} Chunked text
@@ -1242,7 +1314,42 @@ getAvailableModels: function(forceRefresh = false) {
       return [text];
     }
     
-    // Split by paragraphs
+    // Split by natural boundaries like chapters, sections, and paragraphs
+    // Chapter detection: look for chapter headings
+    const chapterMatches = text.match(/(?:Chapter|第[一二三四五六七八九十百千万]+章|第\d+章).*?(?=\n|$)/g);
+    if (chapterMatches && chapterMatches.length > 1) {
+      // If we have multiple chapters, chunk by chapters
+      const chapters = text.split(/(?:Chapter|第[一二三四五六七八九十百千万]+章|第\d+章)/);
+      const chunks = [];
+      
+      // Add chapter headings back to chunks
+      for (let i = 1; i < chapters.length; i++) {
+        const chapterText = chapterMatches[i-1] + chapters[i];
+        
+        // If chapter is too large, break it down further
+        if (chapterText.split(/\s+/).length > chunkSize * 1.5) {
+          const subChunks = this._chunkByParagraphs(chapterText, chunkSize);
+          chunks.push(...subChunks);
+        } else {
+          chunks.push(chapterText);
+        }
+      }
+      
+      return chunks;
+    }
+    
+    // No chapter structure found, fall back to paragraph chunking
+    return this._chunkByParagraphs(text, chunkSize);
+  },
+  
+  /**
+   * Helper method for paragraph chunking
+   * @param {string} text - Text to chunk
+   * @param {number} chunkSize - Target words per chunk
+   * @returns {Array<string>} Chunked text
+   * @private
+   */
+  _chunkByParagraphs: function(text, chunkSize) {
     const paragraphs = text.split(/\n\s*\n/);
     const chunks = [];
     let currentChunk = [];
@@ -1260,8 +1367,32 @@ getAvailableModels: function(forceRefresh = false) {
           currentChunk = [paragraph];
           currentSize = paragraphSize;
         } else {
-          // Paragraph is larger than chunk size, force include it
-          chunks.push(paragraph);
+          // Paragraph is larger than chunk size, break it into sentences
+          const sentences = paragraph.match(/[^.!?。！？]+[.!?。！？]+/g) || [paragraph];
+          let sentenceChunk = [];
+          let sentenceSize = 0;
+          
+          for (const sentence of sentences) {
+            const sentenceWordCount = sentence.split(/\s+/).length;
+            
+            if (sentenceSize + sentenceWordCount <= chunkSize) {
+              sentenceChunk.push(sentence);
+              sentenceSize += sentenceWordCount;
+            } else {
+              if (sentenceChunk.length > 0) {
+                chunks.push(sentenceChunk.join(' '));
+                sentenceChunk = [sentence];
+                sentenceSize = sentenceWordCount;
+              } else {
+                // Even a single sentence is too long, force include it
+                chunks.push(sentence);
+              }
+            }
+          }
+          
+          if (sentenceChunk.length > 0) {
+            chunks.push(sentenceChunk.join(' '));
+          }
         }
       }
     }
@@ -1933,14 +2064,20 @@ ${truncatedTranslatedText}`;
         return modelInfo;
       })
       .then(modelInfo => {
-        // Estimate tokens (rough approximation: ~4 chars per token for English, ~2 chars for Chinese)
+        // Improved token estimation for different languages
+        // Chinese characters count differently than English words
         const chineseCharCount = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
         const otherCharCount = text.length - chineseCharCount;
         
-        const tokenEstimate = Math.ceil(chineseCharCount / 2 + otherCharCount / 4);
+        // More accurate token estimation:
+        // Chinese: ~1.5 tokens per character
+        // English: ~1 token per 4-5 characters
+        const chineseTokens = Math.ceil(chineseCharCount * 1.5);
+        const otherTokens = Math.ceil(otherCharCount / 4.5);
+        const tokenEstimate = chineseTokens + otherTokens;
         
-        // Add some margin for system messages and instructions
-        const totalTokens = tokenEstimate + 200;
+        // Add some margin for system messages, instructions, and model variation
+        const totalTokens = Math.ceil(tokenEstimate * 1.1) + 200;
         
         console.log(`Token estimate: ${totalTokens} (${chineseCharCount} Chinese chars, ${otherCharCount} other chars)`);
         
@@ -1948,17 +2085,20 @@ ${truncatedTranslatedText}`;
         let estimatedCost = 0;
         if (modelInfo.pricing) {
           // OpenRouter pricing is per 1M tokens
-          const promptCost = (modelInfo.pricing.prompt || 0) * totalTokens / 1000000;
+          const promptCost = (parseFloat(modelInfo.pricing.prompt) || 0) * totalTokens / 1000000;
           
-          // For completion, assume response is roughly same length as input
-          const completionCost = (modelInfo.pricing.completion || 0) * totalTokens / 1000000;
+          // For completion, assume response is roughly same length as English text
+          // Chinese text typically translates to longer English text
+          const estimatedOutputTokens = Math.ceil(totalTokens * 1.2);
+          const completionCost = (parseFloat(modelInfo.pricing.completion) || 0) * estimatedOutputTokens / 1000000;
           
           estimatedCost = promptCost + completionCost;
-          console.log(`Estimated cost: ${estimatedCost.toFixed(6)} (prompt: ${promptCost.toFixed(6)}, completion: ${completionCost.toFixed(6)})`);
+          console.log(`Estimated cost: $${estimatedCost.toFixed(6)} (prompt: $${promptCost.toFixed(6)}, completion: $${completionCost.toFixed(6)})`);
         }
         
         return {
           estimatedTokens: totalTokens,
+          estimatedOutputTokens: Math.ceil(totalTokens * 1.2),
           estimatedCost: estimatedCost,
           model: modelInfo.name || model,
           contextLength: modelInfo.context_length || 4096
