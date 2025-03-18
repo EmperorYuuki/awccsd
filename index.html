@@ -25,6 +25,7 @@
   <link rel="stylesheet" href="css/anime-guide.css">
   <link rel="stylesheet" href="css/animations.css">
   <link rel="stylesheet" href="css/glossary.css">
+  <link rel="stylesheet" href="css/anime-guide-chat.css">
 </head>
 
 <body class="dark-mode">
@@ -827,6 +828,53 @@
     <span id="notification-message"></span>
     <button class="notification-close">×</button>
   </div>
+  <!-- Anime Guide Chat Panel -->
+  <div id="anime-guide-chat" class="anime-guide-chat collapsed">
+    <div class="chat-header">
+      <div class="character-info">
+        <div class="character-avatar">
+          <div class="avatar-image anime-character"></div>
+        </div>
+        <div class="character-name">Quill-chan</div>
+      </div>
+      <div class="chat-controls">
+        <button id="minimize-chat-btn" class="chat-control-btn" title="Minimize chat">
+          <i class="fas fa-minus"></i>
+        </button>
+        <button id="expand-chat-btn" class="chat-control-btn" title="Expand chat">
+          <i class="fas fa-expand"></i>
+        </button>
+        <button id="close-chat-btn" class="chat-control-btn" title="Close chat">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="chat-body">
+      <div id="chat-messages" class="chat-messages">
+        <!-- Messages will be inserted here -->
+      </div>
+
+      <div class="suggestions-container">
+        <div id="chat-suggestions" class="chat-suggestions">
+          <!-- Suggestions will be inserted here -->
+        </div>
+      </div>
+
+      <div class="chat-input-container">
+        <textarea id="chat-input" placeholder="Type your message to Quill-chan..."></textarea>
+        <button id="send-chat-btn" class="send-chat-btn" title="Send message">
+          <i class="fas fa-paper-plane"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Chat button (visible when chat is collapsed) -->
+    <button id="open-chat-btn" class="open-chat-btn">
+      <div class="mini-avatar anime-character"></div>
+      <span>Chat with Quill-chan</span>
+    </button>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.min.js"></script>
 
@@ -847,6 +895,9 @@
   <!-- Components -->
   <script src="js/components/placeholder-images.js"></script>
   <script src="js/components/anime-guide.js"></script>
+  <!-- Enhanced Anime Guide Components -->
+  <script src="js/components/anime-guide-chat.js"></script>
+  <script src="js/components/anime-guide-integration.js"></script>
 
   <!-- Main application script -->
   <script src="js/main.js"></script>

@@ -285,3 +285,253 @@
   .bg-grid {
     animation: grid-pulse 15s ease-in-out infinite;
   }
+  /* Enhanced Anime Guide Animations */
+
+/* Character Base Animations */
+.anime-character {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Emotional State Transitions */
+.character-state {
+  transition: opacity 0.3s ease-in-out;
+}
+
+/* State-specific display classes */
+.anime-character[data-emotion="neutral"] #character-neutral {
+  opacity: 1;
+}
+
+.anime-character[data-emotion="happy"] #character-happy {
+  opacity: 1;
+}
+
+.anime-character[data-emotion="thinking"] #character-thinking {
+  opacity: 1;
+}
+
+.anime-character[data-emotion="surprised"] #character-surprised {
+  opacity: 1;
+}
+
+.anime-character[data-emotion="helping"] #character-helping {
+  opacity: 1;
+}
+
+/* Base animation keyframes */
+@keyframes floating {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+@keyframes shake {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  50% { transform: translateX(5px); }
+  75% { transform: translateX(-5px); }
+  100% { transform: translateX(0); }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-20px); }
+  60% { transform: translateY(-15px); }
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes wave {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(15deg); }
+  50% { transform: rotate(0deg); }
+  75% { transform: rotate(-15deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* Animation States */
+.anime-character.idle {
+  animation: floating 4s ease-in-out infinite;
+}
+
+.anime-character.excited {
+  animation: pulse 0.5s ease-in-out infinite;
+}
+
+.anime-character.surprised {
+  animation: shake 0.5s ease-in-out;
+}
+
+.anime-character.happy {
+  animation: bounce 1s ease-in-out;
+}
+
+.anime-character.thinking {
+  animation: floating 6s ease-in-out infinite;
+}
+
+.anime-character.talking {
+  animation: pulse 1s ease-in-out infinite alternate;
+}
+
+.anime-character.waving {
+  animation: wave 1.5s ease-in-out;
+}
+
+/* Bubble Animations */
+@keyframes bubble-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.8) translateY(10px);
+  }
+  70% {
+    transform: scale(1.05) translateY(-5px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes bubble-fade {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.8) translateY(10px);
+  }
+}
+
+.guide-message {
+  animation: bubble-pop 0.4s ease-out forwards;
+}
+
+.guide-message.hiding {
+  animation: bubble-fade 0.3s ease-in forwards;
+}
+
+/* Typing Animation */
+@keyframes typing {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@keyframes blink {
+  from, to {
+    border-color: transparent;
+  }
+  50% {
+    border-color: var(--accent-color);
+  }
+}
+
+.typing-text {
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid var(--accent-color);
+  animation: 
+    typing 3.5s steps(40, end),
+    blink 0.75s step-end infinite;
+}
+
+/* Chat Interface Animations */
+@keyframes slide-up {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.chat-message {
+  animation: slide-up 0.3s ease-out forwards;
+}
+
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent-color);
+  margin: 0 1px;
+  opacity: 0.7;
+}
+
+.typing-dot:nth-child(1) {
+  animation: pulse 1s infinite 0.1s;
+}
+
+.typing-dot:nth-child(2) {
+  animation: pulse 1s infinite 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation: pulse 1s infinite 0.3s;
+}
+
+/* Reaction Animations */
+@keyframes heart-beat {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+}
+
+.reaction-icon {
+  animation: heart-beat 1s ease-in-out infinite;
+}
+
+/* Customization Preview Animations */
+.preview-effects .glowing {
+  animation: glow-pulse 2s infinite;
+}
+
+@keyframes glow-pulse {
+  0% {
+    filter: drop-shadow(0 0 2px var(--accent-color));
+  }
+  50% {
+    filter: drop-shadow(0 0 8px var(--accent-color));
+  }
+  100% {
+    filter: drop-shadow(0 0 2px var(--accent-color));
+  }
+}
+
+/* Transition Effects */
+.smooth-transition {
+  transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+/* Responsive Adaptations */
+@media (max-width: 768px) {
+  .anime-character {
+    transform: scale(0.8);
+  }
+  
+  .guide-message {
+    max-width: 200px;
+    font-size: 0.9rem;
+  }
+}
